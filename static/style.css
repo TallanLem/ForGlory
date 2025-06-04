@@ -1,0 +1,243 @@
+html, body {
+    font-family: sans-serif;
+    margin: 0;
+    padding: 0;
+    background: #f5f5f5;
+    color: #000;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.container {
+    max-width: 900px;
+    margin: auto;
+    padding: 1rem;
+    background: #fff;
+    transition: background-color 0.3s ease;
+}
+
+.header-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.header-bar h1 {
+    margin: 0;
+    font-size: 1.6rem;
+    font-weight: bold;
+}
+
+#theme-toggle {
+    font-size: 1.4rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: color 0.3s ease;
+}
+
+.form {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin-bottom: 0.5rem;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 0.25rem;
+}
+
+.form-group.inline {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.form-group label {
+    margin-bottom: 2px;
+    font-size: 1rem;
+}
+
+select,
+button {
+    font-size: 1rem;
+    padding: 5px 8px;
+    margin: 0;
+    height: auto;
+    transition: background-color 0.3s ease, color 0.3s ease, border 0.3s ease;
+}
+
+button {
+    background: #007BFF;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 6px 12px;
+    font-size: 1rem;
+    margin-top: 0.4rem;
+}
+
+button:hover {
+    background-color: #0056b3;
+}
+
+.table-container {
+    overflow-x: auto;
+    margin-top: 1rem;
+}
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 1rem;
+    table-layout: auto;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+th, td {
+    padding: 6px 10px;
+    border: 1px solid #ccc;
+    vertical-align: middle;
+    overflow-wrap: anywhere;
+    white-space: nowrap;
+}
+
+th:nth-child(1),
+td:nth-child(1) {
+    text-align: center;
+    width: 2.5em;
+}
+
+th:nth-child(2),
+td:nth-child(2) {
+    text-align: left;
+}
+
+th:nth-child(3),
+td:nth-child(3) {
+    text-align: center;
+    min-width: 60px;
+}
+
+tr:nth-child(even) {
+    background-color: #f8f8f8;
+}
+
+tr:nth-child(odd) {
+    background-color: #ffffff;
+}
+
+.gold {
+    background-color: #ffd700 !important;
+    font-weight: bold;
+}
+
+.silver {
+    background-color: #c0c0c0 !important;
+    font-weight: bold;
+}
+
+.bronze {
+    background-color: #cd7f32 !important;
+    font-weight: bold;
+}
+
+/*  Темная тема */
+html.dark {
+    background: #121212;
+    color: #f0f0f0;
+}
+
+html.dark .container {
+    background: #1e1e1e;
+    color: #f0f0f0;
+}
+
+html.dark select,
+html.dark button {
+    background-color: #2c2c2c;
+    color: #f0f0f0;
+    border: 1px solid #555;
+}
+
+html.dark button:hover {
+    background-color: #444;
+}
+
+html.dark table {
+    border-color: #555;
+    color: #f0f0f0;
+}
+
+html.dark th,
+html.dark td {
+    border: 1px solid #555;
+    color: #f0f0f0;
+}
+
+html.dark tr:nth-child(even) {
+    background-color: #222;
+}
+
+html.dark tr:nth-child(odd) {
+    background-color: #1a1a1a;
+}
+
+html.dark .gold {
+    background-color: #9b870c !important;
+}
+
+html.dark .silver {
+    background-color: #888 !important;
+}
+
+html.dark .bronze {
+    background-color: #8b5a2b !important;
+}
+
+/* Ссылки */
+a {
+    color: #007BFF;
+    text-decoration: none;
+}
+a:hover {
+    text-decoration: underline;
+}
+
+html.dark a {
+    color: #66bfff;
+}
+html.dark a:hover {
+    color: #ffffff;
+    text-decoration: underline;
+}
+
+/*  Мобильная адаптация */
+@media (max-width: 500px) {
+    .form-group.inline {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    table {
+        font-size: 1rem;
+    }
+
+    .form-group label,
+    select,
+    button {
+        font-size: 1rem;
+    }
+
+    .header-bar h1 {
+        font-size: 1.4rem;
+    }
+
+    #theme-toggle {
+        font-size: 1.2rem;
+    }
+}

@@ -103,4 +103,4 @@ def index():
                            extract_datetime_from_filename=extract_datetime_from_filename)
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run()

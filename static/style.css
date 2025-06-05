@@ -62,7 +62,8 @@ html, body {
 }
 
 select,
-button {
+button,
+input[type="text"] {
     font-size: 1rem;
     padding: 5px 8px;
     margin: 0;
@@ -158,7 +159,8 @@ html.dark .container {
 }
 
 html.dark select,
-html.dark button {
+html.dark button,
+html.dark input[type="text"] {
     background-color: #2c2c2c;
     color: #f0f0f0;
     border: 1px solid #555;
@@ -224,12 +226,13 @@ html.dark a:hover {
     }
 
     table {
-        font-size: 1rem;
+        font-size: 0.85rem;
     }
 
     .form-group label,
     select,
-    button {
+    button,
+    input[type="text"] {
         font-size: 1rem;
     }
 
@@ -239,5 +242,14 @@ html.dark a:hover {
 
     #theme-toggle {
         font-size: 1.2rem;
+    }
+
+    /* 🔹 Обрезка длинных ников */
+    td:nth-child(2),
+    th:nth-child(2) {
+        max-width: 160px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
 }

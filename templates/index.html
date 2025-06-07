@@ -1,123 +1,126 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta charset="UTF-8">
   <title>For Glory!</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body class="{{ 'dark' if request.cookies.get('theme') == 'dark' else '' }}">
   <div class="container">
-    <div class="header-row">
-      <h1>Рейтинг</h1>
-      <button class="theme-toggle" onclick="toggleTheme()">🌙</button>
-    </div>
+	<div class="header-row">
+	  <h1>Рейтинг</h1>
+	  <button class="theme-toggle" onclick="toggleTheme()">🌙</button>
+	</div>
 
-    <form method="POST" class="form-container">
-      <div class="mode-toggle">
-        <label><input type="radio" name="mode" value="Общий"
-          onchange="this.form.submit()" {{ 'checked' if mode == 'Общий' else '' }}> Общий</label>
-        <label><input type="radio" name="mode" value="Прирост"
-          onchange="this.form.submit()" {{ 'checked' if mode == 'Прирост' else '' }}> Прирост</label>
-      </div>
+	<form method="POST" class="form-container">
+	  <div class="mode-toggle">
+		<label><input type="radio" name="mode" value="Общий"
+		  onchange="this.form.submit()" {{ 'checked' if mode == 'Общий' else '' }}> Общий</label>
+		<label><input type="radio" name="mode" value="Прирост"
+		  onchange="this.form.submit()" {{ 'checked' if mode == 'Прирост' else '' }}> Прирост</label>
+	  </div>
 
-      <div class="date-select">
-        {% if mode == 'Прирост' %}
-          <label>от</label>
-          <select name="file1" onchange="this.form.submit()">
-            {% for f in json_files %}
-              <option value="{{ f }}" {% if f == file1 %}selected{% endif %}>{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}</option>
-            {% endfor %}
-          </select>
-          <label>до</label>
-          <select name="file2" onchange="this.form.submit()">
-            {% for f in json_files %}
-              <option value="{{ f }}" {% if f == file2 %}selected{% endif %}>{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}</option>
-            {% endfor %}
-          </select>
-        {% else %}
-          <select name="file" onchange="this.form.submit()">
-            {% for f in json_files %}
-              <option value="{{ f }}" {% if f == selected_file %}selected{% endif %}>{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}</option>
-            {% endfor %}
-          </select>
-        {% endif %}
-      </div>
+	  <div class="date-select">
+		{% if mode == 'Прирост' %}
+		  <div class="row-inline">	
+			  <label>от</label>
+			  <select name="file1" onchange="this.form.submit()">
+				{% for f in json_files %}
+				  <option value="{{ f }}" {% if f == file1 %}selected{% endif %}>{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}</option>
+				{% endfor %}
+			  </select>
+			  <label>до</label>
+			  <select name="file2" onchange="this.form.submit()">
+				{% for f in json_files %}
+				  <option value="{{ f }}" {% if f == file2 %}selected{% endif %}>{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}</option>
+				{% endfor %}
+			  </select>
+			</div>
+		{% else %}
+		  <select name="file" onchange="this.form.submit()">
+			{% for f in json_files %}
+			  <option value="{{ f }}" {% if f == selected_file %}selected{% endif %}>{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}</option>
+			{% endfor %}
+		  </select>
+		{% endif %}
+	  </div>
 
-      <div class="controls-row">
-        <select name="param" onchange="this.form.submit()">
-          {% for p in param_selectable %}
-            <option value="{{ p }}" {% if p == param %}selected{% endif %}>{{ p }}</option>
-          {% endfor %}
-        </select>
+	  <div class="controls-row row-inline">
+		<select name="param" onchange="this.form.submit()">
+		  {% for p in param_selectable %}
+			<option value="{{ p }}" {% if p == param %}selected{% endif %}>{{ p }}</option>
+		  {% endfor %}
+		</select>
 
-        <select name="sort" onchange="this.form.submit()">
-          {% for s in sort_options %}
-            <option value="{{ s }}" {% if s == sort_dir %}selected{% endif %}>
-              {% if s == 'desc' %}По убыванию{% else %}По возрастанию{% endif %}
-            </option>
-          {% endfor %}
-        </select>
-      </div>
+		<select name="sort" onchange="this.form.submit()">
+		  {% for s in sort_options %}
+			<option value="{{ s }}" {% if s == sort_dir %}selected{% endif %}>
+			  {% if s == 'desc' %}По убыванию{% else %}По возрастанию{% endif %}
+			</option>
+		  {% endfor %}
+		</select>
+	  </div>
 
-      <div class="filter-row">
-        <input type="text" name="filter" placeholder="Поиск по нику" value="{{ filter_value }}" onchange="this.form.submit()">
-      </div>
-    </form>
+	  <div class="filter-row">
+		<input type="text" name="filter" placeholder="Поиск по нику" value="{{ filter_value }}" onchange="this.form.submit()">
+	  </div>
+	</form>
 
-    <!-- {% if filename_display %} -->
-      <!-- <p>{{ filename_display }}</p> -->
-    <!-- {% endif %} -->
+	<!-- {% if filename_display %} -->
+	  <!-- <p>{{ filename_display }}</p> -->
+	<!-- {% endif %} -->
 
-    <table>
-      <thead>
-        <tr>
-          <th>№</th>
-          <th>Игрок</th>
-          <th>{{ param }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% if param.startswith('Кланы') or param.startswith('Братства') %}
-          {% for idx, (group_name, total, members) in enumerate(rating, 1) %}
-            <tr class="{% if idx == 1 %}gold{% elif idx == 2 %}silver{% elif idx == 3 %}bronze{% endif %}">
-              <td>{{ idx }}</td>
-              <td>
-                <details>
-                  <summary>{{ group_name }}</summary>
-                  <div class="details">
-                    {% for pid, name, level, value in members %}
-                      <div><a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">{{ name }} [{{ level }}]</a>: {{ value }}</div>
-                    {% endfor %}
-                  </div>
-                </details>
-              </td>
-              <td>{{ total }}</td>
-            </tr>
-          {% endfor %}
-        {% else %}
-          {% for idx, (pid, name, level, value) in enumerate(rating, 1) %}
-            <tr class="{% if idx == 1 %}gold{% elif idx == 2 %}silver{% elif idx == 3 %}bronze{% endif %}">
-              <td>{{ idx }}</td>
-              <td style="text-align: left;">
-                <a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">{{ name }} [{{ level }}]</a>
-              </td>
-              <td>{{ value }}</td>
-            </tr>
-          {% endfor %}
-        {% endif %}
-      </tbody>
-    </table>
+	<table>
+	  <thead>
+		<tr>
+		  <th>№</th>
+		  <th>Игрок</th>
+		  <th>{{ param }}</th>
+		</tr>
+	  </thead>
+	  <tbody>
+		{% if param.startswith('Кланы') or param.startswith('Братства') %}
+		  {% for idx, (group_name, total, members) in enumerate(rating, 1) %}
+			<tr class="{% if idx == 1 %}gold{% elif idx == 2 %}silver{% elif idx == 3 %}bronze{% endif %}">
+			  <td>{{ idx }}</td>
+			  <td>
+				<details>
+				  <summary>{{ group_name }}</summary>
+				  <div class="details">
+					{% for pid, name, level, value in members %}
+					  <div><a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">{{ name }} [{{ level }}]</a>: {{ value }}</div>
+					{% endfor %}
+				  </div>
+				</details>
+			  </td>
+			  <td>{{ total }}</td>
+			</tr>
+		  {% endfor %}
+		{% else %}
+		  {% for idx, (pid, name, level, value) in enumerate(rating, 1) %}
+			<tr class="{% if idx == 1 %}gold{% elif idx == 2 %}silver{% elif idx == 3 %}bronze{% endif %}">
+			  <td>{{ idx }}</td>
+			  <td style="text-align: left;">
+				<a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">{{ name }} [{{ level }}]</a>
+			  </td>
+			  <td>{{ value }}</td>
+			</tr>
+		  {% endfor %}
+		{% endif %}
+	  </tbody>
+	</table>
   </div>
 
   <script>
-    function toggleTheme() {
-      const html = document.documentElement;
-      const body = document.body;
-      const current = body.classList.contains('dark') ? 'dark' : 'light';
-      const next = current === 'dark' ? 'light' : 'dark';
-      body.classList.toggle('dark');
-      document.cookie = `theme=${next}; path=/; max-age=31536000`;
-    }
+	function toggleTheme() {
+	  const html = document.documentElement;
+	  const body = document.body;
+	  const current = body.classList.contains('dark') ? 'dark' : 'light';
+	  const next = current === 'dark' ? 'light' : 'dark';
+	  body.classList.toggle('dark');
+	  document.cookie = `theme=${next}; path=/; max-age=31536000`;
+	}
   </script>
 </body>
 </html>

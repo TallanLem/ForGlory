@@ -1,134 +1,167 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-	<meta charset="UTF-8">
-	<title>Рейтинг</title>
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-	<script>
-		const theme = localStorage.getItem("theme");
-		if (theme === "dark") {
-			document.documentElement.classList.add("dark");
-		}
-	</script>
+  <meta charset="UTF-8">
+  <title>For Glory!</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+	(function() {
+	  if (localStorage.getItem("theme") === "dark") {
+		document.documentElement.classList.add("dark");
+	  }
+	})();
+  </script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
-<div class="container">
-	<div class="header-bar">
-		<h1>Рейтинг</h1>
-		<button id="theme-toggle" onclick="toggleDarkMode()" title="Переключить тему">🌙</button>
+  <div class="container">
+	<div class="header-row">
+	  <h1 class="title">Рейтинг</h1>
+	  <button type="button" id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">
+		<span id="theme-icon">🌙</span>
+	  </button>
 	</div>
 
-	<form method="POST" class="form">
+	<form method="post" class="form">
 
-		<div class="form-group inline">
-			<label>Режим:</label>
-			<label><input type="radio" name="mode" value="Общий" {% if mode == 'Общий' %}checked{% endif %}> Общий</label>
-			<label><input type="radio" name="mode" value="Прирост" {% if mode == 'Прирост' %}checked{% endif %}> Прирост</label>
+	  <div class="form-row">
+		<label><input type="radio" name="mode" value="Общий"
+		  {% if mode == 'Общий' %}checked{% endif %}
+		  onchange="this.form.submit()"> Общий</label>
+
+		<label><input type="radio" name="mode" value="Прирост"
+		  {% if mode == 'Прирост' %}checked{% endif %}
+		  onchange="this.form.submit()"> Прирост</label>
+	  </div>
+
+	  <div class="form-row">
+		<input type="text" name="filter" placeholder="Поиск по нику" value="{{ filter_value }}" onchange="this.form.submit()">
+	  </div>
+
+	  {% if mode == 'Общий' %}
+		<div class="form-row">
+		  <select name="file" onchange="this.form.submit()">
+			{% for f in json_files %}
+			  <option value="{{ f }}" {% if f == selected_file %}selected{% endif %}>
+				{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
+			  </option>
+			{% endfor %}
+		  </select>
 		</div>
-
-		<div class="form-group" id="file-group" {% if mode != 'Общий' %}style="display:none;"{% endif %}>
-			<select name="file" id="file">
-				{% for file in json_files %}
-					{% set dt = extract_datetime_from_filename(file).strftime('%d.%m.%Y %H:%M') %}
-					<option value="{{ file }}" {% if file == selected_file %}selected{% endif %}>{{ dt }}</option>
-				{% endfor %}
-			</select>
+	  {% elif mode == 'Прирост' %}
+		<div class="form-row">
+		  <label>от</label>
+		  <select name="file1" onchange="this.form.submit()">
+			{% for f in json_files %}
+			  <option value="{{ f }}" {% if f == file1 %}selected{% endif %}>
+				{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
+			  </option>
+			{% endfor %}
+		  </select>
+		  <label>до</label>
+		  <select name="file2" onchange="this.form.submit()">
+			{% for f in json_files %}
+			  <option value="{{ f }}" {% if f == file2 %}selected{% endif %}>
+				{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
+			  </option>
+			{% endfor %}
+		  </select>
 		</div>
+	  {% endif %}
 
-		<div id="growth-group" class="form-group inline" {% if mode != 'Прирост' %}style="display:none;"{% endif %}>
-			<span>от</span>
-			<select name="file1" id="file1">
-				{% for file in json_files %}
-					{% set dt = extract_datetime_from_filename(file).strftime('%d.%m.%Y %H:%M') %}
-					<option value="{{ file }}" {% if file == file1 %}selected{% endif %}>{{ dt }}</option>
-				{% endfor %}
-			</select>
-			<span>до</span>
-			<select name="file2" id="file2">
-				{% for file in json_files %}
-					{% set dt = extract_datetime_from_filename(file).strftime('%d.%m.%Y %H:%M') %}
-					<option value="{{ file }}" {% if file == file2 %}selected{% endif %}>{{ dt }}</option>
-				{% endfor %}
-			</select>
-		</div>
+	  <div class="form-row">
+		<label>Параметр</label>
+		<select name="param" onchange="this.form.submit()">
+		  {% for p in param_selectable %}
+			<option value="{{ p }}" {% if p == param %}selected{% endif %}>{{ p }}</option>
+		  {% endfor %}
+		</select>
 
-		<div class="form-group inline">
-			<label for="param">Параметр:</label>
-			<select name="param" id="param">
-				{% for option in param_options %}
-					<option value="{{ option }}" {% if option == param %}selected{% endif %}>{{ option }}</option>
-				{% endfor %}
-			</select>
+		<select name="sort" onchange="this.form.submit()">
+		  <option value="desc" {% if sort_dir == 'desc' %}selected{% endif %}>По убыванию</option>
+		  <option value="asc" {% if sort_dir == 'asc' %}selected{% endif %}>По возрастанию</option>
+		</select>
+	  </div>
 
-			<select name="sort" id="sort">
-				<option value="desc" {% if sort_dir == 'desc' %}selected{% endif %}>По убыванию</option>
-				<option value="asc" {% if sort_dir == 'asc' %}selected{% endif %}>По возрастанию</option>
-			</select>
-		</div>
-		<input type="text" name="filter" placeholder="Фильтр по нику" value="{{ filter_value or '' }}" class="input">
-		<button type="submit">Показать</button>
 	</form>
 
-	<p><strong>{{ filename_display }}</strong></p>
+	<p class="date-label">{{ filename_display }}</p>
 
-	<div class="table-container">
-		<table>
-			<thead>
-			<tr>
-				<th>№</th>
-				<th style="text-align: left;">Игрок</th>
-				<th>{{ param }}</th>
+	{% if rating and rating[0]|length == 4 %}
+	  <table>
+		<thead>
+		  <tr>
+			<th>№</th>
+			<th>Игрок</th>
+			<th>{{ "Слава" if "славе" in param else "Сумма статов" if "статам" in param else param }}</th>
+		  </tr>
+		</thead>
+		<tbody>
+		  {% for idx, row in enumerate(rating, 1) %}
+			{% set pid, name, level, value = row %}
+			<tr class="{{ 'gold' if idx == 1 else 'silver' if idx == 2 else 'bronze' if idx == 3 else '' }} {{ 'even' if loop.index0 % 2 == 0 else 'odd' }}">
+			  <td class="center">{{ idx }}</td>
+			  <td style="text-align: left;">
+				<a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">
+				  {{ name }} [{{ level }}]
+				</a>
+			  </td>
+			  <td class="center">{{ value }}</td>
 			</tr>
-			</thead>
-			<tbody>
-			{% for row in rating %}
-				{% set idx = loop.index %}
-				{% set pid, name, level, value = row %}
-				{% set row_class = '' %}
-				{% if idx == 1 %} {% set row_class = 'gold' %}
-				{% elif idx == 2 %} {% set row_class = 'silver' %}
-				{% elif idx == 3 %} {% set row_class = 'bronze' %}
-				{% endif %}
-				<tr class="{{ row_class }}">
-					<td>{{ idx }}</td>
-					<td style="text-align: left;">
-						<a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">{{ name }} [{{ level }}]</a>
-					</td>
-					<td>{{ value }}</td>
-				</tr>
-			{% endfor %}
-			</tbody>
-		</table>
-	</div>
-</div>
+		  {% endfor %}
+		</tbody>
+	  </table>
 
-<script>
-function toggleDarkMode() {
-	const isDark = document.documentElement.classList.toggle("dark");
-	localStorage.setItem("theme", isDark ? "dark" : "light");
-	document.getElementById("theme-toggle").textContent = isDark ? "🌞" : "🌙";
-}
+	{% elif rating and rating[0]|length == 3 %}
+	  <table>
+		<thead>
+		  <tr>
+			<th>№</th>
+			<th>Группа</th>
+			<th>{{ "Слава" if "славе" in param else "Сумма статов" }}</th>
+		  </tr>
+		</thead>
+		<tbody>
+		  {% for idx, group in enumerate(rating, 1) %}
+			{% set group_name, total, members = group %}
+			<tr class="group-header {{ 'gold' if idx == 1 else 'silver' if idx == 2 else 'bronze' if idx == 3 else '' }}">
+			  <td class="center">{{ idx }}</td>
+			  <td colspan="1"><details><summary>{{ group_name }}</summary>
+				<ul>
+				  {% for pid, name, level, value in members %}
+					<li>
+					  <a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">{{ name }} [{{ level }}]</a>
+					  — {{ value }}
+					</li>
+				  {% endfor %}
+				</ul>
+			  </summary></details></td>
+			  <td class="center">{{ total }}</td>
+			</tr>
+		  {% endfor %}
+		</tbody>
+	  </table>
+	{% endif %}
 
-window.addEventListener("DOMContentLoaded", () => {
-	const isDark = document.documentElement.classList.contains("dark");
-	document.getElementById("theme-toggle").textContent = isDark ? "🌞" : "🌙";
+  </div>
 
-	const radioGrowth = document.querySelector('input[value="Прирост"]');
-	const radioTotal = document.querySelector('input[value="Общий"]');
-	const fileGroup = document.getElementById("file-group");
-	const growthGroup = document.getElementById("growth-group");
+  <script>
+	function toggleTheme() {
+	  const html = document.documentElement;
+	  const isDark = html.classList.toggle("dark");
+	  localStorage.setItem("theme", isDark ? "dark" : "light");
+	  document.getElementById("theme-icon").textContent = isDark ? "☀️" : "🌙";
+	}
 
-	const updateVisibility = () => {
-		const isGrowth = radioGrowth.checked;
-		fileGroup.style.display = isGrowth ? "none" : "block";
-		growthGroup.style.display = isGrowth ? "flex" : "none";
-	};
-
-	radioGrowth.addEventListener("change", updateVisibility);
-	radioTotal.addEventListener("change", updateVisibility);
-	updateVisibility();  // начальное состояние
-});
-</script>
+	window.addEventListener("DOMContentLoaded", () => {
+	  const isDark = localStorage.getItem("theme") === "dark";
+	  if (isDark) {
+		document.documentElement.classList.add("dark");
+		document.getElementById("theme-icon").textContent = "☀️";
+	  } else {
+		document.getElementById("theme-icon").textContent = "🌙";
+	  }
+	});
+  </script>
 </body>
 </html>

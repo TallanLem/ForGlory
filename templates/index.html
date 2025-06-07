@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>Рейтинг</title>
+  <title>For Glory!</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body class="{{ 'dark' if request.cookies.get('theme') == 'dark' else '' }}">
@@ -60,13 +60,13 @@
       </div>
 
       <div class="filter-row">
-        <input type="text" name="filter" placeholder="Поиск по нику..." value="{{ filter_value }}" onchange="this.form.submit()">
+        <input type="text" name="filter" placeholder="Поиск по нику" value="{{ filter_value }}" onchange="this.form.submit()">
       </div>
     </form>
 
-    {% if filename_display %}
-      <p>{{ filename_display }}</p>
-    {% endif %}
+    <!-- {% if filename_display %} -->
+      <!-- <p>{{ filename_display }}</p> -->
+    <!-- {% endif %} -->
 
     <table>
       <thead>

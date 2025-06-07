@@ -2,166 +2,122 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>For Glory!</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script>
-	(function() {
-	  if (localStorage.getItem("theme") === "dark") {
-		document.documentElement.classList.add("dark");
-	  }
-	})();
-  </script>
+  <title>Рейтинг</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+<body class="{{ 'dark' if request.cookies.get('theme') == 'dark' else '' }}">
   <div class="container">
-	<div class="header-row">
-	  <h1 class="title">Рейтинг</h1>
-	  <button type="button" id="theme-toggle" class="theme-toggle" onclick="toggleTheme()">
-		<span id="theme-icon">🌙</span>
-	  </button>
-	</div>
+    <div class="header-row">
+      <h1>Рейтинг</h1>
+      <button class="theme-toggle" onclick="toggleTheme()">🌙</button>
+    </div>
 
-	<form method="post" class="form">
+    <form method="POST" class="form-container">
+      <div class="mode-toggle">
+        <label><input type="radio" name="mode" value="Общий"
+          onchange="this.form.submit()" {{ 'checked' if mode == 'Общий' else '' }}> Общий</label>
+        <label><input type="radio" name="mode" value="Прирост"
+          onchange="this.form.submit()" {{ 'checked' if mode == 'Прирост' else '' }}> Прирост</label>
+      </div>
 
-	  <div class="form-row">
-		<label><input type="radio" name="mode" value="Общий"
-		  {% if mode == 'Общий' %}checked{% endif %}
-		  onchange="this.form.submit()"> Общий</label>
+      <div class="date-select">
+        {% if mode == 'Прирост' %}
+          <label>от</label>
+          <select name="file1" onchange="this.form.submit()">
+            {% for f in json_files %}
+              <option value="{{ f }}" {% if f == file1 %}selected{% endif %}>{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}</option>
+            {% endfor %}
+          </select>
+          <label>до</label>
+          <select name="file2" onchange="this.form.submit()">
+            {% for f in json_files %}
+              <option value="{{ f }}" {% if f == file2 %}selected{% endif %}>{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}</option>
+            {% endfor %}
+          </select>
+        {% else %}
+          <select name="file" onchange="this.form.submit()">
+            {% for f in json_files %}
+              <option value="{{ f }}" {% if f == selected_file %}selected{% endif %}>{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}</option>
+            {% endfor %}
+          </select>
+        {% endif %}
+      </div>
 
-		<label><input type="radio" name="mode" value="Прирост"
-		  {% if mode == 'Прирост' %}checked{% endif %}
-		  onchange="this.form.submit()"> Прирост</label>
-	  </div>
+      <div class="controls-row">
+        <select name="param" onchange="this.form.submit()">
+          {% for p in param_selectable %}
+            <option value="{{ p }}" {% if p == param %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
+        </select>
 
-	  <div class="form-row">
-		<input type="text" name="filter" placeholder="Поиск по нику" value="{{ filter_value }}" onchange="this.form.submit()">
-	  </div>
+        <select name="sort" onchange="this.form.submit()">
+          {% for s in sort_options %}
+            <option value="{{ s }}" {% if s == sort_dir %}selected{% endif %}>
+              {% if s == 'desc' %}По убыванию{% else %}По возрастанию{% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
 
-	  {% if mode == 'Общий' %}
-		<div class="form-row">
-		  <select name="file" onchange="this.form.submit()">
-			{% for f in json_files %}
-			  <option value="{{ f }}" {% if f == selected_file %}selected{% endif %}>
-				{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
-			  </option>
-			{% endfor %}
-		  </select>
-		</div>
-	  {% elif mode == 'Прирост' %}
-		<div class="form-row">
-		  <label>от</label>
-		  <select name="file1" onchange="this.form.submit()">
-			{% for f in json_files %}
-			  <option value="{{ f }}" {% if f == file1 %}selected{% endif %}>
-				{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
-			  </option>
-			{% endfor %}
-		  </select>
-		  <label>до</label>
-		  <select name="file2" onchange="this.form.submit()">
-			{% for f in json_files %}
-			  <option value="{{ f }}" {% if f == file2 %}selected{% endif %}>
-				{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
-			  </option>
-			{% endfor %}
-		  </select>
-		</div>
-	  {% endif %}
+      <div class="filter-row">
+        <input type="text" name="filter" placeholder="Поиск по нику..." value="{{ filter_value }}" onchange="this.form.submit()">
+      </div>
+    </form>
 
-	  <div class="form-row">
-		<label>Параметр</label>
-		<select name="param" onchange="this.form.submit()">
-		  {% for p in param_selectable %}
-			<option value="{{ p }}" {% if p == param %}selected{% endif %}>{{ p }}</option>
-		  {% endfor %}
-		</select>
+    {% if filename_display %}
+      <p>{{ filename_display }}</p>
+    {% endif %}
 
-		<select name="sort" onchange="this.form.submit()">
-		  <option value="desc" {% if sort_dir == 'desc' %}selected{% endif %}>По убыванию</option>
-		  <option value="asc" {% if sort_dir == 'asc' %}selected{% endif %}>По возрастанию</option>
-		</select>
-	  </div>
-
-	</form>
-
-	<p class="date-label">{{ filename_display }}</p>
-
-	{% if rating and rating[0]|length == 4 %}
-	  <table>
-		<thead>
-		  <tr>
-			<th>№</th>
-			<th>Игрок</th>
-			<th>{{ "Слава" if "славе" in param else "Сумма статов" if "статам" in param else param }}</th>
-		  </tr>
-		</thead>
-		<tbody>
-		  {% for idx, row in enumerate(rating, 1) %}
-			{% set pid, name, level, value = row %}
-			<tr class="{{ 'gold' if idx == 1 else 'silver' if idx == 2 else 'bronze' if idx == 3 else '' }} {{ 'even' if loop.index0 % 2 == 0 else 'odd' }}">
-			  <td class="center">{{ idx }}</td>
-			  <td style="text-align: left;">
-				<a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">
-				  {{ name }} [{{ level }}]
-				</a>
-			  </td>
-			  <td class="center">{{ value }}</td>
-			</tr>
-		  {% endfor %}
-		</tbody>
-	  </table>
-
-	{% elif rating and rating[0]|length == 3 %}
-	  <table>
-		<thead>
-		  <tr>
-			<th>№</th>
-			<th>Группа</th>
-			<th>{{ "Слава" if "славе" in param else "Сумма статов" }}</th>
-		  </tr>
-		</thead>
-		<tbody>
-		  {% for idx, group in enumerate(rating, 1) %}
-			{% set group_name, total, members = group %}
-			<tr class="group-header {{ 'gold' if idx == 1 else 'silver' if idx == 2 else 'bronze' if idx == 3 else '' }}">
-			  <td class="center">{{ idx }}</td>
-			  <td colspan="1"><details><summary>{{ group_name }}</summary>
-				<ul>
-				  {% for pid, name, level, value in members %}
-					<li>
-					  <a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">{{ name }} [{{ level }}]</a>
-					  — {{ value }}
-					</li>
-				  {% endfor %}
-				</ul>
-			  </summary></details></td>
-			  <td class="center">{{ total }}</td>
-			</tr>
-		  {% endfor %}
-		</tbody>
-	  </table>
-	{% endif %}
-
+    <table>
+      <thead>
+        <tr>
+          <th>№</th>
+          <th>Игрок</th>
+          <th>{{ param }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if param.startswith('Кланы') or param.startswith('Братства') %}
+          {% for idx, (group_name, total, members) in enumerate(rating, 1) %}
+            <tr class="{% if idx == 1 %}gold{% elif idx == 2 %}silver{% elif idx == 3 %}bronze{% endif %}">
+              <td>{{ idx }}</td>
+              <td>
+                <details>
+                  <summary>{{ group_name }}</summary>
+                  <div class="details">
+                    {% for pid, name, level, value in members %}
+                      <div><a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">{{ name }} [{{ level }}]</a>: {{ value }}</div>
+                    {% endfor %}
+                  </div>
+                </details>
+              </td>
+              <td>{{ total }}</td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          {% for idx, (pid, name, level, value) in enumerate(rating, 1) %}
+            <tr class="{% if idx == 1 %}gold{% elif idx == 2 %}silver{% elif idx == 3 %}bronze{% endif %}">
+              <td>{{ idx }}</td>
+              <td style="text-align: left;">
+                <a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">{{ name }} [{{ level }}]</a>
+              </td>
+              <td>{{ value }}</td>
+            </tr>
+          {% endfor %}
+        {% endif %}
+      </tbody>
+    </table>
   </div>
 
   <script>
-	function toggleTheme() {
-	  const html = document.documentElement;
-	  const isDark = html.classList.toggle("dark");
-	  localStorage.setItem("theme", isDark ? "dark" : "light");
-	  document.getElementById("theme-icon").textContent = isDark ? "☀️" : "🌙";
-	}
-
-	window.addEventListener("DOMContentLoaded", () => {
-	  const isDark = localStorage.getItem("theme") === "dark";
-	  if (isDark) {
-		document.documentElement.classList.add("dark");
-		document.getElementById("theme-icon").textContent = "☀️";
-	  } else {
-		document.getElementById("theme-icon").textContent = "🌙";
-	  }
-	});
+    function toggleTheme() {
+      const html = document.documentElement;
+      const body = document.body;
+      const current = body.classList.contains('dark') ? 'dark' : 'light';
+      const next = current === 'dark' ? 'light' : 'dark';
+      body.classList.toggle('dark');
+      document.cookie = `theme=${next}; path=/; max-age=31536000`;
+    }
   </script>
 </body>
 </html>

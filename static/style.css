@@ -21,7 +21,6 @@
   --odd-row: #2a2a2a;
   --highlight: #2a2a55;
 
-  /* Блеклая подсветка топ-3 */
   --gold: #2a2a1a;
   --silver: #2d2d2d;
   --bronze: #3a2a1a;
@@ -46,38 +45,58 @@ h1 {
   font-size: 1.5em;
 }
 
-.controls {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin: 10px 0;
+.form-container {
+  margin: 0;
+  padding: 0;
 }
 
-.controls-row {
+.mode-toggle {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 10px;
+  font-size: 0.95em;
+}
+
+.controls,
+.controls-row,
+.date-select,
+.filter-row {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
   font-size: 0.9em;
+  margin-bottom: 10px;
 }
 
-.controls label {
-  white-space: nowrap;
+.controls label,
+.mode-toggle label {
+  font-size: 0.95em;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
-select, input[type="text"] {
-  padding: 5px;
-  font-size: 0.9em;
-  border-radius: 4px;
+.mode-toggle input[type="radio"] {
+  accent-color: #007bff;
+  width: 16px;
+  height: 16px;
+}
+
+select,
+input[type="text"] {
+  padding: 6px 10px;
+  font-size: 1em;
+  border-radius: 6px;
   border: 1px solid #ccc;
   background-color: var(--bg-color);
   color: var(--text-color);
+  transition: all 0.2s ease;
 }
 
-button {
-  padding: 6px 12px;
-  font-size: 0.9em;
-  cursor: pointer;
+input[name="filter"] {
+  max-width: 250px;
+  width: 100%;
 }
 
 table {
@@ -87,7 +106,8 @@ table {
   font-size: 0.95em;
 }
 
-th, td {
+th,
+td {
   padding: 8px;
   text-align: center;
   word-break: break-word;
@@ -117,29 +137,25 @@ tr:nth-child(odd) {
   background-color: var(--odd-row);
 }
 
-.dark tr:nth-child(even) {
-  background-color: var(--even-row);
-}
-.dark tr:nth-child(odd) {
-  background-color: var(--odd-row);
-}
-
+/* Подсветка топ-3 */
 tr.gold {
-  background-color: var(--gold);
+  background-color: var(--gold) !important;
   font-weight: bold;
 }
-
 tr.silver {
-  background-color: var(--silver);
+  background-color: var(--silver) !important;
   font-weight: bold;
 }
-
 tr.bronze {
-  background-color: var(--bronze);
+  background-color: var(--bronze) !important;
   font-weight: bold;
 }
 
-
+/* .dark tr.gold td, */
+/* .dark tr.silver td, */
+/* .dark tr.bronze td { */
+  /* color: #222; */
+/* } */
 
 .details {
   margin-left: 1em;
@@ -171,37 +187,30 @@ details > summary {
     padding: 10px;
   }
 
-  select, input[type="text"] {
+  select,
+  input[type="text"] {
     font-size: 0.8em;
     width: 100%;
   }
 
-  .controls-row {
-    gap: 5px;
-    font-size: 0.8em;
+  .controls-row,
+  .date-select,
+  .filter-row {
     flex-direction: column;
     align-items: stretch;
+    gap: 5px;
   }
 
   table {
     font-size: 0.85em;
   }
 
-  th, td {
+  th,
+  td {
     padding: 6px;
   }
 
   h1 {
     font-size: 1.2em;
   }
-}
-
-tr.gold {
-  background-color: var(--gold) !important;
-}
-tr.silver {
-  background-color: var(--silver) !important;
-}
-tr.bronze {
-  background-color: var(--bronze) !important;
 }

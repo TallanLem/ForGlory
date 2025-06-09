@@ -6,20 +6,23 @@
   <title>For Glory!</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body class="{{ 'dark' if request.cookies.get('theme') == 'dark' else '' }}">
+<body>
   <div class="container">
 	<div class="header-row">
 	  <h1>Рейтинг</h1>
-	  <button class="theme-toggle" onclick="toggleTheme()">🌙</button>
+	  <button id="theme-toggle" class="theme-toggle">🌙</button>
 	</div>
 
 	<form method="POST" class="form-container">
-	  <div class="mode-toggle">
-		<label><input type="radio" name="mode" value="Общий"
-		  onchange="this.form.submit()" {{ 'checked' if mode == 'Общий' else '' }}> Общий</label>
-		<label><input type="radio" name="mode" value="Прирост"
-		  onchange="this.form.submit()" {{ 'checked' if mode == 'Прирост' else '' }}> Прирост</label>
-	  </div>
+		<div class="mode-toggle">
+		  <input type="radio" id="tab1" name="mode" value="Общий"
+				 onchange="this.form.submit()" {{ 'checked' if mode == 'Общий' else '' }}>
+		  <label for="tab1">Общий</label>
+
+		  <input type="radio" id="tab2" name="mode" value="Прирост"
+				 onchange="this.form.submit()" {{ 'checked' if mode == 'Прирост' else '' }}>
+		  <label for="tab2">Прирост</label>
+		</div>
 
 	  <div class="date-select">
 		{% if mode == 'Прирост' %}
@@ -75,26 +78,36 @@
 	  <thead>
 		<tr>
 		  <th>№</th>
-		  <th>Игрок</th>
-		  <th>{{ param }}</th>
+		  <th class="col2">{{ column2_name }}</th>
+		  <th class="col3" style="text-align: center;">{{ column3_name }}</th>
 		</tr>
 	  </thead>
 	  <tbody>
 		{% if param.startswith('Кланы') or param.startswith('Братства') %}
-		  {% for idx, (group_name, total, members) in enumerate(rating, 1) %}
+		  {% for idx, row in enumerate(rating, 1) %}
 			<tr class="{% if idx == 1 %}gold{% elif idx == 2 %}silver{% elif idx == 3 %}bronze{% endif %}">
 			  <td>{{ idx }}</td>
 			  <td>
 				<details>
-				  <summary>{{ group_name }}</summary>
+				  <summary>{{ row.name }}</summary>
 				  <div class="details">
-					{% for pid, name, level, value in members %}
-					  <div><a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">{{ name }} [{{ level }}]</a>: {{ value }}</div>
-					{% endfor %}
+					<table class="inner-table">
+						{% for hero in row.members %}
+							<tr>
+								<td>{{ hero._rank }}.</td>
+								<td>
+									<a href="https://wekings.online/hero/detail?player={{ hero.ID }}" target="_blank">
+									{{ hero.Имя }} [{{ hero.Уровень }}]
+									</a>
+								</td>
+								<td class="heroes">{{ hero.value }}</td>
+							</tr>
+						{% endfor %}
+					</table>
 				  </div>
 				</details>
 			  </td>
-			  <td>{{ total }}</td>
+			  <td>{{ row.score }}</td>
 			</tr>
 		  {% endfor %}
 		{% else %}
@@ -112,15 +125,23 @@
 	</table>
   </div>
 
-  <script>
-	function toggleTheme() {
-	  const html = document.documentElement;
-	  const body = document.body;
-	  const current = body.classList.contains('dark') ? 'dark' : 'light';
-	  const next = current === 'dark' ? 'light' : 'dark';
-	  body.classList.toggle('dark');
-	  document.cookie = `theme=${next}; path=/; max-age=31536000`;
-	}
-  </script>
+	<script>
+		document.addEventListener("DOMContentLoaded", () => {
+			const toggleButton = document.getElementById("theme-toggle");
+			const root = document.documentElement;
+			const isDark = () => root.classList.contains("dark");
+			const savedTheme = localStorage.getItem("theme");
+			if (savedTheme === "dark") {root.classList.add("dark");}
+			toggleButton.textContent = isDark() ? "☀️" : "🌙";
+
+			toggleButton.addEventListener("click", () => {
+				root.classList.toggle("dark");
+				const next = isDark() ? "dark" : "light";
+				localStorage.setItem("theme", next);
+				toggleButton.textContent = isDark() ? "☀️" : "🌙";
+			});
+		});
+	</script>
+
 </body>
 </html>

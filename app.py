@@ -136,6 +136,8 @@ def index():
 	column2_name = "Игрок"
 	column3_name = selected_param
 	if selected_param == "Братства по славе":
+		if mode == "Прирост":
+			selected_param = 'Слава'
 		column2_name = "Братство"
 		column3_name = "Слава"
 	elif selected_param == "Кланы по славе":
@@ -153,8 +155,6 @@ def index():
 		filename_display = dt.strftime("%d.%m.%Y %H:%M") if dt else selected_file
 
 	elif mode == "Прирост":
-		selected_param = "Слава"
-
 		file1 = request.form.get("file1")
 		file2 = request.form.get("file2")
 		if (not file1 or not file2) and len(json_files) >= 2:

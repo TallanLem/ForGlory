@@ -76,29 +76,43 @@ def build_growth_rating(data1, data2, param, sort_dir, filter_value=""):
 	rating.sort(key=lambda x: x[3], reverse=reverse)
 	return rating
 
+def build_group_rating(data, group_key, param, sort_dir):
+	from operator import itemgetter
 
-def build_group_rating(data, group_key, param_key, sort_dir):
-	groups = {}
-	for pid, hero in data.items():
-		group = hero.get(group_key, "").strip()
+	grouped = {}
+
+	for hero in data.values():
+		group = hero.get(group_key)
 		if not group or "не состоит" in group.lower():
 			continue
-		value = 0
-		if isinstance(param_key, list):
-			value = sum(hero.get(k, 0) for k in param_key)
-		else:
-			value = hero.get(param_key, 0)
-		name = hero.get("Имя", "Безымянный")
-		level = hero.get("Уровень", "?")
-		groups.setdefault(group, []).append((pid, name, level, value))
 
-	results = []
-	for group_name, members in groups.items():
-		total = sum(x[3] for x in members)
-		results.append((group_name, total, members))
-	reverse = sort_dir == "desc"
-	results.sort(key=lambda x: x[1], reverse=reverse)
-	return results
+		if isinstance(param, str):
+			value = hero.get(param, 0)
+		elif isinstance(param, list):
+			value = sum(hero.get(p, 0) for p in param)
+		else:
+			value = 0
+
+		hero["value"] = value
+		grouped.setdefault(group, []).append(hero)
+
+	result = []
+	for group_name, members in grouped.items():
+		members_sorted = sorted(members, key=lambda h: h["value"], reverse=(sort_dir == "desc"))
+
+		for i, member in enumerate(members_sorted, start=1):
+			member["_rank"] = i
+
+		group_score = sum(h["value"] for h in members_sorted)
+
+		result.append({
+			"name": group_name,
+			"score": group_score,
+			"members": members_sorted
+		})
+
+	result.sort(key=itemgetter("score"), reverse=(sort_dir == "desc"))
+	return result
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -114,33 +128,51 @@ def index():
 	filename_display = ""
 	files_display = [(f, extract_datetime_from_filename(f).strftime("%d.%m.%Y %H:%M")) for f in json_files]
 
-	if request.method == "POST":
-		mode = request.form.get("mode", mode)
-		selected_param = request.form.get("param", selected_param)
-		sort_dir = request.form.get("sort", sort_dir)
-		filter_value = request.form.get("filter", "").strip()
+	mode = request.form.get("mode", mode)
+	selected_param = request.form.get("param", selected_param)
+	sort_dir = request.form.get("sort", sort_dir)
+	filter_value = request.form.get("filter", "").strip()
 
-		if mode == "Общий":
-			selected_file = request.form.get("file", selected_file)
-			data = load_data(selected_file)
-			rating = build_rating(data, selected_param, sort_dir, filter_value)
-			dt = extract_datetime_from_filename(selected_file)
-			filename_display = dt.strftime("%d.%m.%Y %H:%M") if dt else selected_file
+	column2_name = "Игрок"
+	column3_name = selected_param
+	if selected_param == "Братства по славе":
+		column2_name = "Братство"
+		column3_name = "Слава"
+	elif selected_param == "Кланы по славе":
+		column2_name = "Клан"
+		column3_name = "Слава"
+	elif selected_param == "Кланы по статам":
+		column2_name = "Клан"
+		column3_name = "Сумма статов"
 
-		elif mode == "Прирост":
-			file1 = request.form.get("file1")
-			file2 = request.form.get("file2")
-			#~ if file1 and file2 and not ("Клан" in selected_param or "Братство" in selected_param):
-			if file1 and file2 and os.path.isfile(file1) and os.path.isfile(file2):
-				data1 = load_data(file1)
-				data2 = load_data(file2)
-				rating = build_growth_rating(data1, data2, selected_param, sort_dir, filter_value)
-				dt1 = extract_datetime_from_filename(file1)
-				dt2 = extract_datetime_from_filename(file2)
-				filename_display = f"{dt1.strftime('%d.%m.%Y %H:%M')} → {dt2.strftime('%d.%m.%Y %H:%M')}" if dt1 and dt2 else ""
-			else:
-				rating = []
-				filename_display = "Нужно выбрать разные даты"
+	if mode == "Общий":
+		selected_file = request.form.get("file", selected_file)
+		data = load_data(selected_file)
+		rating = build_rating(data, selected_param, sort_dir, filter_value)
+		dt = extract_datetime_from_filename(selected_file)
+		filename_display = dt.strftime("%d.%m.%Y %H:%M") if dt else selected_file
+
+	elif mode == "Прирост":
+		selected_param = "Слава"
+
+		file1 = request.form.get("file1")
+		file2 = request.form.get("file2")
+		if (not file1 or not file2) and len(json_files) >= 2:
+			file2 = json_files[0]
+			file1 = json_files[1]
+		elif len(json_files) == 1:
+			file1 = file2 = json_files[0]
+
+		if file1 and file2 and os.path.isfile(file1) and os.path.isfile(file2):
+			data1 = load_data(file1)
+			data2 = load_data(file2)
+			rating = build_growth_rating(data1, data2, selected_param, sort_dir, filter_value)
+			dt1 = extract_datetime_from_filename(file1)
+			dt2 = extract_datetime_from_filename(file2)
+			filename_display = f"{dt1.strftime('%d.%m.%Y %H:%M')} → {dt2.strftime('%d.%m.%Y %H:%M')}" if dt1 and dt2 else ""
+		else:
+			rating = []
+			filename_display = "Нужно выбрать разные даты"
 
 	else:
 		data = load_data(selected_file)
@@ -161,6 +193,8 @@ def index():
 						   file1=file1,
 						   file2=file2,
 						   param_options=param_options,
+						   column2_name=column2_name,
+						   column3_name=column3_name,
 						   param_selectable=param_selectable,
 						   sort_options=sort_options,
 						   filter_value=filter_value,

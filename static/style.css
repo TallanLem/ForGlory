@@ -1,6 +1,8 @@
 :root {
   --bg-color: #ffffff;
   --text-color: #111111;
+  --link-color: #0077cc;
+  --link-hover: #005fa3;
 
   --header-color: #f0f0f0;
   --gold: #fff9cc;
@@ -12,9 +14,11 @@
   --highlight: #e0e0ff;
 }
 
-.dark {
+:root.dark {
   --bg-color: #121212;
   --text-color: #f0f0f0;
+  --link-color: #66bfff;
+  --link-hover: #3399ff;
 
   --header-color: #1a1a1a;
   --even-row: #1e1e1e;
@@ -32,6 +36,14 @@ body {
   background-color: var(--bg-color);
   color: var(--text-color);
   transition: background-color 0.3s, color 0.3s;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
 }
 
 .container {
@@ -53,7 +65,7 @@ h1 {
 .mode-toggle {
   display: flex;
   gap: 15px;
-  margin-bottom: 10px;
+  margin-bottom: 2px;
   font-size: 0.95em;
 }
 
@@ -85,9 +97,9 @@ h1 {
 
 select,
 input[type="text"] {
-  padding: 6px 10px;
+  padding: 5px 5px;
   font-size: 1em;
-  border-radius: 6px;
+  border-radius: 3px;
   border: 1px solid #ccc;
   background-color: var(--bg-color);
   color: var(--text-color);
@@ -102,8 +114,13 @@ input[name="filter"] {
 table {
   width: 100%;
   border-collapse: collapse;
-  margin-top: 20px;
+  margin-top: 2px;
   font-size: 0.95em;
+}
+
+a {
+  color: var(--link-color);
+  text-decoration: none;
 }
 
 th,
@@ -125,10 +142,7 @@ td:nth-child(2) {
   text-align: left;
 }
 
-th:last-child,
-td:last-child {
-  text-align: center;
-}
+
 
 tr:nth-child(even) {
   background-color: var(--even-row);
@@ -164,7 +178,7 @@ details > summary {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 15px;
+  margin-bottom: 3px;
 }
 
 .theme-toggle {
@@ -175,110 +189,12 @@ details > summary {
   color: inherit;
 }
 
-/* Mobile */
-@media (max-width: 600px) {
-  .container {
-    padding: 10px;
-  }
-
-  h1 {
-    font-size: 1.2em;
-  }
-
-  .mode-toggle {
-    flex-direction: row;
-    justify-content: start;
-    gap: 15px;
-    font-size: 0.9em;
-  }
-
-  .date-select,
-  .controls-row,
-  .filter-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 6px;
-    margin-bottom: 10px;
-  }
-
-  select,
-  input[type="text"] {
-    width: 100%;
-    font-size: 0.95em;
-    padding: 8px;
-  }
-
-  .theme-toggle {
-    font-size: 1.5em;
-  }
-
-  table {
-    font-size: 0.9em;
-    table-layout: fixed;
-    word-wrap: break-word;
-  }
-
-  th,
-  td {
-    padding: 6px 4px;
-  }
-
-  input[name="filter"] {
-    width: 100%;
-    max-width: 100%;
-  }
-
-  .header-row {
-    flex-direction: row;
-    justify-content: space-between;
-    align-items: center;
-  }
-}
-
-
-@media (max-width: 768px) {
-  body {
-    font-size: 16px;
-    padding: 10px;
-  }
-
-  .table-container {
-    overflow-x: auto;
-  }
-
-  table {
-    font-size: 14px;
-    min-width: 600px;
-  }
-
-  select, input[type="text"] {
-    font-size: 16px;
-  }
-
-  .form-container,
-  .controls,
-  .filters {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 10px;
-  }
-
-  .theme-toggle {
-    position: static;
-    margin-top: 10px;
-  }
-
-  .header-row {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-}
-
 
 @media (max-width: 480px) {
   body {
+
     font-size: 15px;
-    padding: 8px;
+    padding: 2px;
   }
 
   table {
@@ -289,7 +205,7 @@ details > summary {
   }
 
   th, td {
-    padding: 6px 4px;
+    padding: 2px 2px;
     word-wrap: break-word;
   }
 
@@ -307,35 +223,62 @@ details > summary {
   .filters {
     flex-direction: column;
     align-items: stretch;
-    gap: 8px;
+    gap: 2px;
   }
 
   .theme-toggle {
-    margin-top: 10px;
+    margin-top: 2px;
     align-self: flex-end;
   }
 
   .header-row {
-    flex-direction: column;
-    align-items: flex-start;
+	  display: flex;
+	  justify-content: space-between;
+	  align-items: center;
+	  flex-wrap: wrap;
+	}
+  
+  th.col3,
+  td.col3 {
+    width: 6em;
+    text-align: right;
+    white-space: nowrap;
   }
 }
 
 
-@media (max-width: 600px) {
-  .row-inline {
-    flex-direction: row !important;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 10px;
-  }
+.mode-toggle {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 1em;
 }
 
+/* Скрываем радиокнопки */
+.mode-toggle input[type="radio"] {
+  display: none;
+}
 
-@media (max-width: 600px) {
-  .row-inline select,
-  .row-inline input[type="text"] {
-    width: auto;
-    flex: 1 1 auto;
-  }
+/* Общий стиль для вкладки */
+.mode-toggle label {
+  padding: 8px 16px;
+  cursor: pointer;
+  border: 1px solid var(--link-color);
+  border-radius: 6px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-weight: normal;
+  transition: background 0.2s, font-weight 0.2s;
+  user-select: none;
+}
+
+/* Активная вкладка */
+.mode-toggle input[type="radio"]:checked + label {
+  background: var(--link-color);
+  color: white;
+  font-weight: bold;
+}
+
+/* Неактивная — стиль по умолчанию */
+.mode-toggle input[type="radio"]:not(:checked) + label {
+  opacity: 0.7;
 }

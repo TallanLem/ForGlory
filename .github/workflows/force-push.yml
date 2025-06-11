@@ -31,6 +31,6 @@ jobs:
 
       - name: Push changes with PAT
         run: |
-          git config --unset-all http.https://github.com/.extraheader
+          git config --unset-all http.https://github.com/.extraheader || true
           git remote set-url origin https://x-access-token:$GH_PAT@github.com/${{ github.repository }}
           git push origin HEAD:main

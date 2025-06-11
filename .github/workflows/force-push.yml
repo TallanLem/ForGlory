@@ -25,8 +25,9 @@ jobs:
         run: |
           date > .render_trigger
           git add .render_trigger
-          git commit -m "Trigger deploy [auto]" || echo "No changes to commit"
+          git commit -m "Trigger deploy [auto]" || echo "No changes"
 
       - name: Push changes
         run: |
-          git push https://x-access-token:$GH_PAT@github.com/${{ github.repository }} HEAD:main
+          git remote set-url origin https://x-access-token:$GH_PAT@github.com/${{ github.repository }}
+          git push origin HEAD:main

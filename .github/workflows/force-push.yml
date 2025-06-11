@@ -9,6 +9,9 @@ on:
 jobs:
   trigger:
     runs-on: ubuntu-latest
+    env:
+      GH_PAT: ${{ secrets.GH_PAT }}
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -20,12 +23,10 @@ jobs:
 
       - name: Make fake commit
         run: |
-          date > .render_trigger  # создаёт или обновляет файл
+          date > .render_trigger
           git add .render_trigger
-          git commit -m "Trigger deploy [auto]"
+          git commit -m "Trigger deploy [auto]" || echo "No changes to commit"
 
       - name: Push changes
-        env:
-          TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          git push https://x-access-token:${GH_PAT}@github.com/${{ github.repository }} HEAD:main
+          git push https://x-access-token:$GH_PAT@github.com/${{ github.repository }} HEAD:main

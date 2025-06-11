@@ -1,0 +1,31 @@
+name: Force push to trigger Render
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - data/**
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Git
+        run: |
+          git config user.name "AutoDeploy Bot"
+          git config user.email "bot@example.com"
+
+      - name: Make fake commit
+        run: |
+          date > .render_trigger  # создаёт или обновляет файл
+          git add .render_trigger
+          git commit -m "Trigger deploy [auto]"
+
+      - name: Push changes
+        env:
+          TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          git push https://x-access-token:${TOKEN}@github.com/${{ github.repository }} HEAD:main

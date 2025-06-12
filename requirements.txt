@@ -1,4 +1,5 @@
-Flask>=2.2
+flask==2.3.3
+werkzeug==2.3.7
 gunicorn
 beautifulsoup4
 aiohttp

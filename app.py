@@ -182,6 +182,7 @@ def index():
 
 	param_selectable = [p for p in param_options if mode != "Прирост" or ("Клан" not in p and "Братства" not in p)]
 
+
 	return render_template("index.html",
 						   rating=rating,
 						   param=selected_param,
@@ -205,5 +206,5 @@ def index():
 
 
 if __name__ == "__main__":
-	app.run()
-	#~ app.run(debug=True)
+	#~ app.run()
+	app.run(debug=True)

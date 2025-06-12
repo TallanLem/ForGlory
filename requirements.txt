@@ -1,5 +1,12 @@
+<<<<<<< HEAD
 Flask>=2.2
 gunicorn
 beautifulsoup4
 aiohttp
+=======
+Flask>=2.2
+gunicorn
+beautifulsoup4
+aiohttp
+>>>>>>> 8a4bfe72b2510ea5873da87fd80cc6dd8556c4a3
 requests

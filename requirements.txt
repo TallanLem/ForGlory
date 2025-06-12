@@ -1,0 +1,5 @@
+Flask>=2.2
+gunicorn
+beautifulsoup4
+aiohttp
+requests

@@ -1,0 +1,284 @@
+:root {
+  --bg-color: #ffffff;
+  --text-color: #111111;
+  --link-color: #0077cc;
+  --link-hover: #005fa3;
+
+  --header-color: #f0f0f0;
+  --gold: #fff9cc;
+  --silver: #f0f0f0;
+  --bronze: #f1c6a3;
+
+  --even-row: #f9f9f9;
+  --odd-row: #ffffff;
+  --highlight: #e0e0ff;
+}
+
+:root.dark {
+  --bg-color: #121212;
+  --text-color: #f0f0f0;
+  --link-color: #66bfff;
+  --link-hover: #3399ff;
+
+  --header-color: #1a1a1a;
+  --even-row: #1e1e1e;
+  --odd-row: #2a2a2a;
+  --highlight: #2a2a55;
+
+  --gold: #2a2a1a;
+  --silver: #2d2d2d;
+  --bronze: #3a2a1a;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  transition: background-color 0.3s, color 0.3s;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 10px 15px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.5em;
+}
+
+.form-container {
+  margin: 0;
+  padding: 0;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 15px;
+  margin-bottom: 2px;
+  font-size: 0.95em;
+}
+
+.controls,
+.controls-row,
+.date-select,
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  font-size: 0.9em;
+  margin-bottom: 10px;
+}
+
+.controls label,
+.mode-toggle label {
+  font-size: 0.95em;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mode-toggle input[type="radio"] {
+  accent-color: #007bff;
+  width: 16px;
+  height: 16px;
+}
+
+select,
+input[type="text"] {
+  padding: 5px 5px;
+  font-size: 1em;
+  border-radius: 3px;
+  border: 1px solid #ccc;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  transition: all 0.2s ease;
+}
+
+input[name="filter"] {
+  max-width: 250px;
+  width: 100%;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 2px;
+  font-size: 0.95em;
+}
+
+a {
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+th,
+td {
+  padding: 8px;
+  text-align: center;
+  word-break: break-word;
+  color: var(--text-color);
+}
+
+th:first-child,
+td:first-child {
+  text-align: center;
+  width: 2.5em;
+}
+
+th:nth-child(2),
+td:nth-child(2) {
+  text-align: left;
+}
+
+
+
+tr:nth-child(even) {
+  background-color: var(--even-row);
+}
+tr:nth-child(odd) {
+  background-color: var(--odd-row);
+}
+
+tr.gold {
+  background-color: var(--gold) !important;
+  font-weight: bold;
+}
+tr.silver {
+  background-color: var(--silver) !important;
+  font-weight: bold;
+}
+tr.bronze {
+  background-color: var(--bronze) !important;
+  font-weight: bold;
+}
+
+.details {
+  margin-left: 1em;
+  font-size: 0.9em;
+}
+
+details > summary {
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 3px;
+}
+
+.theme-toggle {
+  background: none;
+  border: none;
+  font-size: 1.2em;
+  cursor: pointer;
+  color: inherit;
+}
+
+
+@media (max-width: 480px) {
+  body {
+
+    font-size: 15px;
+    padding: 2px;
+  }
+
+  table {
+    font-size: 13px;
+    min-width: unset;
+    width: 100%;
+    table-layout: fixed;
+  }
+
+  th, td {
+    padding: 2px 2px;
+    word-wrap: break-word;
+  }
+
+  .table-container {
+    overflow-x: auto;
+  }
+
+  select, input[type="text"] {
+    font-size: 15px;
+    max-width: 100%;
+  }
+
+  .form-container,
+  .controls,
+  .filters {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+  }
+
+  .theme-toggle {
+    margin-top: 2px;
+    align-self: flex-end;
+  }
+
+  .header-row {
+	  display: flex;
+	  justify-content: space-between;
+	  align-items: center;
+	  flex-wrap: wrap;
+	}
+  
+  th.col3,
+  td.col3 {
+    width: 6em;
+    text-align: right;
+    white-space: nowrap;
+  }
+}
+
+
+.mode-toggle {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 1em;
+}
+
+/* Скрываем радиокнопки */
+.mode-toggle input[type="radio"] {
+  display: none;
+}
+
+/* Общий стиль для вкладки */
+.mode-toggle label {
+  padding: 8px 16px;
+  cursor: pointer;
+  border: 1px solid var(--link-color);
+  border-radius: 6px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-weight: normal;
+  transition: background 0.2s, font-weight 0.2s;
+  user-select: none;
+}
+
+/* Активная вкладка */
+.mode-toggle input[type="radio"]:checked + label {
+  background: var(--link-color);
+  color: white;
+  font-weight: bold;
+}
+
+/* Неактивная — стиль по умолчанию */
+.mode-toggle input[type="radio"]:not(:checked) + label {
+  opacity: 0.7;
+}

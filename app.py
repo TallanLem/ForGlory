@@ -16,7 +16,7 @@ param_options = [
 	"Награбил (серебро)", "Потерял (серебро)",
 	"Награбил (кристаллы)", "Потерял (кристаллы)",
 	"Чат",
-	"Братства по славе", "Кланы по славе", "Кланы по статам"
+	"Братства по славе", "Кланы по славе", "Кланы по статам", "По уровню"
 ]
 
 sort_options = ["desc", "asc"]
@@ -76,6 +76,38 @@ def build_growth_rating(data1, data2, param, sort_dir, filter_value=""):
 	rating.sort(key=lambda x: x[3], reverse=reverse)
 	return rating
 
+def get_level_ratings(data):
+	from collections import defaultdict
+
+	grouped = defaultdict(list)
+	for hero in data.values():
+		if "Уровень" in hero and "Сила" in hero:
+			grouped[hero["Уровень"]].append(hero)
+
+	for level in grouped:
+		grouped[level].sort(key=lambda h: h.get("Сила", 0), reverse=True)
+
+	sorted_levels = sorted(grouped.keys(), reverse=True)
+
+	return [
+		{
+			"level": level,
+			"players": [
+				{
+					"name": hero.get("Имя", "Безымянный"),
+					"level": level,
+					"strength": hero.get("Сила", 0),
+					"defense": hero.get("Защита", 0),
+					"dexterity": hero.get("Ловкость", 0),
+					"mastery": hero.get("Мастерство", 0),
+					"vitality": hero.get("Живучесть", 0),
+				}
+				for hero in grouped[level]
+			]
+		}
+		for level in sorted_levels
+	]
+
 def build_group_rating(data, group_key, param, sort_dir):
 	from operator import itemgetter
 
@@ -120,15 +152,16 @@ def index():
 	json_files = get_all_json_files()
 	selected_param = "Слава"
 	sort_dir = "desc"
-	mode = "Общий"
 	filter_value = ""
 	selected_file = json_files[0] if json_files else None
 	file1 = file2 = None
 	rating = []
+	level_ratings = []
 	filename_display = ""
 	files_display = [(f, extract_datetime_from_filename(f).strftime("%d.%m.%Y %H:%M")) for f in json_files]
 
-	mode = request.form.get("mode", mode)
+	mode = request.form.get("mode") or "Общий"
+
 	selected_param = request.form.get("param", selected_param)
 	sort_dir = request.form.get("sort", sort_dir)
 	filter_value = request.form.get("filter", "").strip()
@@ -141,16 +174,24 @@ def index():
 		column2_name = "Братство"
 		column3_name = "Слава"
 	elif selected_param == "Кланы по славе":
+		if mode == "Прирост":
+			selected_param = 'Слава'
 		column2_name = "Клан"
 		column3_name = "Слава"
 	elif selected_param == "Кланы по статам":
+		if mode == "Прирост":
+			selected_param = 'Слава'
 		column2_name = "Клан"
 		column3_name = "Сумма статов"
 
 	if mode == "Общий":
 		selected_file = request.form.get("file", selected_file)
 		data = load_data(selected_file)
-		rating = build_rating(data, selected_param, sort_dir, filter_value)
+		level_ratings = get_level_ratings(data)
+		if selected_param == "По уровню":
+			rating = []
+		else:
+			rating = build_rating(data, selected_param, sort_dir, filter_value)
 		dt = extract_datetime_from_filename(selected_file)
 		filename_display = dt.strftime("%d.%m.%Y %H:%M") if dt else selected_file
 
@@ -170,21 +211,22 @@ def index():
 			dt1 = extract_datetime_from_filename(file1)
 			dt2 = extract_datetime_from_filename(file2)
 			filename_display = f"{dt1.strftime('%d.%m.%Y %H:%M')} → {dt2.strftime('%d.%m.%Y %H:%M')}" if dt1 and dt2 else ""
-		else:
-			rating = []
-			filename_display = "Нужно выбрать разные даты"
-
 	else:
-		data = load_data(selected_file)
-		rating = build_rating(data, selected_param, sort_dir)
-		dt = extract_datetime_from_filename(selected_file)
-		filename_display = dt.strftime("%d.%m.%Y %H:%M") if dt else selected_file
+		selected_param = request.args.get("param", param_options[0])
 
-	param_selectable = [p for p in param_options if mode != "Прирост" or ("Клан" not in p and "Братства" not in p)]
+
+	param_selectable = [
+			p for p in param_options
+			if not (
+				mode == "Прирост"
+				and (p.startswith("Кланы") or p.startswith("Братства") or p == "По уровню")
+			)
+		]
 
 
 	return render_template("index.html",
 						   rating=rating,
+						   level_ratings=level_ratings,
 						   param=selected_param,
 						   sort_dir=sort_dir,
 						   mode=mode,
@@ -206,5 +248,5 @@ def index():
 
 
 if __name__ == "__main__":
-	app.run()
-	#~ app.run(debug=True)
+	#~ app.run()
+	app.run(debug=True)

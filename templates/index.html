@@ -1,6 +1,14 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
+	<script>
+		if (localStorage.getItem('theme') === 'dark') {
+			document.documentElement.classList.add('dark');
+		} else {
+			document.documentElement.classList.remove('dark');
+		}
+	</script>
+
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta charset="UTF-8">
   <title>For Glory!</title>
@@ -74,13 +82,63 @@
 	  <!-- <p>{{ filename_display }}</p> -->
 	<!-- {% endif %} -->
 
+{% if param == "По уровню" and mode == "Общий" %}
+	<tbody>
+		{% for group in level_ratings %}
+		<tr>
+			<td colspan="3">
+				<details>
+					<summary>Уровень {{ group.level }} [{{ group.players|length }}]</summary>
+					<div class="details">
+						<table class="inner-table">
+							<thead>
+								<tr>
+									<th style="text-align: left;">№</th>
+									<th class="wide-name" style="width: 40%; text-align: left;">Ник</th>
+									<th class="tight"><img src="{{ url_for('static', filename='icons/strength.png') }}" alt="strength" class="icon"></th>
+									<th class="tight"><img src="{{ url_for('static', filename='icons/defense.png') }}" alt="defense" class="icon"></th>
+									<th class="tight"><img src="{{ url_for('static', filename='icons/dexterity.png') }}" alt="dexterity" class="icon"></th>
+									<th class="tight"><img src="{{ url_for('static', filename='icons/mastery.png') }}" alt="mastery" class="icon"></th>
+									<th class="tight"><img src="{{ url_for('static', filename='icons/vitality.png') }}" alt="vitality" class="icon"></th>
+								</tr>
+							</thead>
+							<tbody>
+								{% for player in group.players %}
+								<tr>
+									<td style="text-align: left;">{{ loop.index }}</td>
+									<td class="wide-name shorten" style="text-align: left;">
+										<a href="https://wekings.online/hero/detail?player={{ player.ID }}" target="_blank" style="display: inline-flex; max-width: 100%; overflow: hidden;">
+											<span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 100%;">
+											{{ player.name }}
+											</span>
+											<span style="white-space: nowrap; flex-shrink: 0;">[{{ player.level }}]</span>
+										</a>
+									</td>
+									<td class="tight">{{ player.strength }}</td>
+									<td class="tight">{{ player.defense }}</td>
+									<td class="tight">{{ player.dexterity }}</td>
+									<td class="tight">{{ player.mastery }}</td>
+									<td class="tight">{{ player.vitality }}</td>
+								</tr>
+								{% endfor %}
+							</tbody>
+						</table>
+					</div>
+				</details>
+			</td>
+		</tr>
+		{% endfor %}
+	</tbody>
+{% endif %}
 	<table>
 	  <thead>
-		<tr>
-		  <th>№</th>
-		  <th class="col2">{{ column2_name }}</th>
-		  <th class="col3" style="text-align: center;">{{ column3_name }}</th>
-		</tr>
+		{% if param != "По уровню" %}
+			<tr>
+				<th>№</th>
+				<th class="col2">{{ column2_name }}</th>
+				<th class="col3" style="text-align: center;">{{ column3_name }}</th>
+			</tr>
+		{% endif %}
 	  </thead>
 	  <tbody>
 		{% if param.startswith('Кланы') or param.startswith('Братства') %}
@@ -96,8 +154,11 @@
 							<tr>
 								<td>{{ hero._rank }}.</td>
 								<td>
-									<a href="https://wekings.online/hero/detail?player={{ hero.ID }}" target="_blank">
-									{{ hero.Имя }} [{{ hero.Уровень }}]
+									<a href="https://wekings.online/hero/detail?player={{ hero.ID }}" target="_blank" style="display: inline-flex; max-width: 100%; overflow: hidden;">
+										<span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 100%;">
+										{{ hero.Имя }}
+										</span>
+										<span style="white-space: nowrap; flex-shrink: 0;">[{{ hero.Уровень }}]</span>
 									</a>
 								</td>
 								<td class="heroes">{{ hero.value }}</td>

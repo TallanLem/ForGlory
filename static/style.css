@@ -52,6 +52,12 @@ body {
   padding: 10px 15px;
 }
 
+.icon {
+	width: 20px;
+	height: 20px;
+	vertical-align: middle;
+}
+
 h1 {
   margin: 0;
   font-size: 1.5em;
@@ -124,11 +130,14 @@ a {
 }
 
 th,
+th,
 td {
   padding: 8px;
   text-align: center;
-  word-break: break-word;
   color: var(--text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 th:first-child,
@@ -204,10 +213,13 @@ details > summary {
     table-layout: fixed;
   }
 
-  th, td {
-    padding: 2px 2px;
-    word-wrap: break-word;
-  }
+th,
+td {
+	  padding: 2px 2px;
+	  white-space: nowrap;
+	  overflow: hidden;
+	  text-overflow: ellipsis;
+	}
 
   .table-container {
     overflow-x: auto;
@@ -404,10 +416,10 @@ a {
 }
 
 th,
+th,
 td {
   padding: 8px;
   text-align: center;
-  word-break: break-word;
   color: var(--text-color);
 }
 
@@ -484,9 +496,10 @@ details > summary {
     table-layout: fixed;
   }
 
-  th, td {
+th,
+td {
     padding: 2px 2px;
-    word-wrap: break-word;
+    word-wrap: break-all;
   }
 
   .table-container {

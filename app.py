@@ -1,22 +1,24 @@
+import logging, os, json, glob, re
+
 from flask import Flask, render_template, request
-import os
-import json
-import glob
-import re
 from datetime import datetime
 
+
 app = Flask(__name__)
+
+logging.basicConfig(level=logging.DEBUG)
 
 data_folder = "data"
 
 stat_keys = ["Сила", "Защита", "Ловкость", "Мастерство", "Живучесть"]
 
 param_options = [
-	"Слава", "Сила", "Побед", "Поражений",
+	"По уровню",
+	"Слава", "Побед", "Поражений",
+	"Сила", "Защита", "Ловкость", "Мастерство", "Живучесть",
 	"Награбил (серебро)", "Потерял (серебро)",
 	"Награбил (кристаллы)", "Потерял (кристаллы)",
-	"Чат",
-	"Братства по славе", "Кланы по славе", "Кланы по статам", "По уровню"
+	"Братства по славе", "Кланы по славе", "Кланы по статам"
 ]
 
 sort_options = ["desc", "asc"]
@@ -40,13 +42,13 @@ def load_data(filepath):
 		return json.load(f)
 
 
-def build_rating(data, param, sort_dir, filter_value=""):
+def build_rating(data, param, sort_dir, filter_value="", previous_data=None):
 	if param == "Кланы по славе":
-		return build_group_rating(data, "Клан", "Слава", sort_dir)
+		return build_group_rating(data, "Клан", "Слава", sort_dir, previous_data)
 	elif param == "Братства по славе":
-		return build_group_rating(data, "Братство", "Слава", sort_dir)
+		return build_group_rating(data, "Братство", "Слава", sort_dir, previous_data)
 	elif param == "Кланы по статам":
-		return build_group_rating(data, "Клан", stat_keys, sort_dir)
+		return build_group_rating(data, "Клан", stat_keys, sort_dir, previous_data)
 	else:
 		rating = []
 		for pid, hero in data.items():
@@ -54,9 +56,19 @@ def build_rating(data, param, sort_dir, filter_value=""):
 				value = hero.get(param, 0)
 				name = hero.get("Имя", "Безымянный")
 				level = hero.get("Уровень", "?")
-				rating.append((pid, name, level, value))
+				delta = None
+				if previous_data and pid in previous_data:
+					value_old = previous_data[pid].get(param, 0)
+					if value_old:
+						delta = value - value_old
+					else:
+						delta = 0
+
+				rating.append((pid, name, level, [value, delta]))
+
 		reverse = sort_dir == "desc"
-		rating.sort(key=lambda x: x[3], reverse=reverse)
+		rating.sort(key=lambda x: x[3][0], reverse=reverse)
+		rating = rating[:1000]
 		return rating
 
 
@@ -74,6 +86,7 @@ def build_growth_rating(data1, data2, param, sort_dir, filter_value=""):
 		rating.append((pid, name, level, diff))
 	reverse = sort_dir == "desc"
 	rating.sort(key=lambda x: x[3], reverse=reverse)
+	rating = rating[:1000]
 	return rating
 
 def get_level_ratings(data):
@@ -108,7 +121,7 @@ def get_level_ratings(data):
 		for level in sorted_levels
 	]
 
-def build_group_rating(data, group_key, param, sort_dir):
+def build_group_rating(data, group_key, param, sort_dir, previous_data=None):
 	from operator import itemgetter
 
 	grouped = {}
@@ -118,14 +131,22 @@ def build_group_rating(data, group_key, param, sort_dir):
 		if not group or "не состоит" in group.lower():
 			continue
 
+		hero_id = str(hero.get("id") or hero.get("ID") or "")
+
 		if isinstance(param, str):
 			value = hero.get(param, 0)
+			value_old = previous_data.get(hero_id, {}).get(param, 0) if previous_data else 0
 		elif isinstance(param, list):
 			value = sum(hero.get(p, 0) for p in param)
+			value_old = sum(previous_data.get(hero_id, {}).get(p, 0) for p in param) if previous_data else 0
 		else:
 			value = 0
+			value_old = 0
+
+		delta = value - value_old
 
 		hero["value"] = value
+		hero["delta"] = delta
 		grouped.setdefault(group, []).append(hero)
 
 	result = []
@@ -136,10 +157,12 @@ def build_group_rating(data, group_key, param, sort_dir):
 			member["_rank"] = i
 
 		group_score = sum(h["value"] for h in members_sorted)
+		group_delta = sum(h.get("delta", 0) for h in members_sorted)
 
 		result.append({
 			"name": group_name,
 			"score": group_score,
+			"delta": group_delta,
 			"members": members_sorted
 		})
 
@@ -183,15 +206,27 @@ def index():
 			selected_param = 'Слава'
 		column2_name = "Клан"
 		column3_name = "Сумма статов"
+	elif selected_param == "По уровню":
+		if mode == "Прирост":
+			selected_param = 'Слава'
 
 	if mode == "Общий":
 		selected_file = request.form.get("file", selected_file)
+
 		data = load_data(selected_file)
+
+		file_index = json_files.index(selected_file)
+		if file_index + 1 < len(json_files):
+			prev_file = load_data(json_files[file_index + 1])
+		else:
+			prev_file = None
+
 		level_ratings = get_level_ratings(data)
 		if selected_param == "По уровню":
 			rating = []
 		else:
-			rating = build_rating(data, selected_param, sort_dir, filter_value)
+			rating = build_rating(data, selected_param, sort_dir, filter_value, prev_file)
+
 		dt = extract_datetime_from_filename(selected_file)
 		filename_display = dt.strftime("%d.%m.%Y %H:%M") if dt else selected_file
 

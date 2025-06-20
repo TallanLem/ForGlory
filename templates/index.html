@@ -78,10 +78,6 @@
 	  </div>
 	</form>
 
-	<!-- {% if filename_display %} -->
-	  <!-- <p>{{ filename_display }}</p> -->
-	<!-- {% endif %} -->
-
 {% if param == "По уровню" and mode == "Общий" %}
 	<tbody>
 		{% for group in level_ratings %}
@@ -135,16 +131,26 @@
 		{% if param != "По уровню" %}
 			<tr>
 				<th>№</th>
-				<th class="col2">{{ column2_name }}</th>
-				<th class="col3" style="text-align: center;">{{ column3_name }}</th>
+				<th class="col2" style="text-align: left;">{{ column2_name }}</th>
+				<th class="col3" style="text-align: left;">{{ column3_name }}</th>
 			</tr>
 		{% endif %}
 	  </thead>
 	  <tbody>
 		{% if param.startswith('Кланы') or param.startswith('Братства') %}
 		  {% for idx, row in enumerate(rating, 1) %}
-			<tr class="{% if idx == 1 %}gold{% elif idx == 2 %}silver{% elif idx == 3 %}bronze{% endif %}">
-			  <td>{{ idx }}</td>
+			<tr>
+				<td>
+				  {% if idx == 1 %}
+					🥇
+				  {% elif idx == 2 %}
+					🥈
+				  {% elif idx == 3 %}
+					🥉
+				  {% else %}
+					{{ idx }}
+				  {% endif %}
+				</td>
 			  <td>
 				<details>
 				  <summary>{{ row.name }}</summary>
@@ -168,17 +174,45 @@
 				  </div>
 				</details>
 			  </td>
-			  <td>{{ row.score }}</td>
+			  <td>
+				  {{ row.score }}
+				  {% if row.delta is not none and row.delta != 0 %}
+					<span style="color: {{ 'green' if row.delta > 0 else 'red' }};">
+					  ({{ '+' if row.delta > 0 else '' }}{{ row.delta }})
+					</span>
+				  {% endif %}
+			  </td>
 			</tr>
 		  {% endfor %}
 		{% else %}
 		  {% for idx, (pid, name, level, value) in enumerate(rating, 1) %}
-			<tr class="{% if idx == 1 %}gold{% elif idx == 2 %}silver{% elif idx == 3 %}bronze{% endif %}">
-			  <td>{{ idx }}</td>
-			  <td style="text-align: left;">
+			<tr>
+			    <td>
+				  {% if idx == 1 %}
+					🥇
+				  {% elif idx == 2 %}
+					🥈
+				  {% elif idx == 3 %}
+					🥉
+				  {% else %}
+					{{ idx }}
+				  {% endif %}
+				</td>
+			  <td style="text-align: left">
 				<a href="https://wekings.online/hero/detail?player={{ pid }}" target="_blank">{{ name }} [{{ level }}]</a>
 			  </td>
-			  <td>{{ value }}</td>
+			    <td style="text-align: left;">
+				  {% if mode == "Общий" %}
+					{{ value[0] }}
+					{% if value[1] is not none and value[1] != 0 %}
+					  <span style="color: {{ 'green' if value[1] > 0 else 'red' }};">
+						({{ '+' if value[1] > 0 else '-' }}{{ value[1] }})
+					  </span>
+					{% endif %}
+				  {% else %}
+					{{ value }}
+				  {% endif %}
+				</td>
 			</tr>
 		  {% endfor %}
 		{% endif %}

@@ -4,3 +4,5 @@ gunicorn
 beautifulsoup4
 aiohttp
 requests
+aiohttp
+nest_asyncio

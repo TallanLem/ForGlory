@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from time import sleep
 
+
 logging.basicConfig(
 	level=logging.INFO,
 	format='%(asctime)s [%(levelname)s] %(message)s',
@@ -32,6 +33,12 @@ headers = {
 	)
 }
 
+
+def save_cookies(session, path):
+	cookies = [{"name": c.key, "value": c.value} for c in session.cookie_jar]
+	with open(path, "w", encoding="utf-8") as f:
+		json.dump(cookies, f, indent=2, ensure_ascii=False)
+		logging.info(f"Saved {len(cookies)} cookies.")
 
 def parse_hero(html, hero_id):
 	soup = BeautifulSoup(html, "html.parser")
@@ -76,10 +83,9 @@ async def fetch_hero(session, hero_id, sem):
 	url = "{}hero/detail?player={}".format(dom, hero_id)
 	async with sem:
 		try:
-			async with session.get(url, timeout=15) as response:
+			async with session.get(url, timeout=10) as response:
 				text = await response.text()
 				if "Что-то пошло не так" in text:
-					uprint(f"[{hero_id}] Страница отсутствует")
 					return hero_id, None
 				if response.status == 200 and "text-center text-xl" in text:
 					hero_data = parse_hero(text, hero_id)
@@ -90,105 +96,6 @@ async def fetch_hero(session, hero_id, sem):
 
 	return hero_id, None
 
-async def parse_chat(results):
-	from bs4 import BeautifulSoup
-	import glob
-
-	date_file = "last_checked_date_chat.txt"
-
-	last_checked = None
-	if os.path.exists(date_file):
-		with open(date_file, "r") as f:
-			try:
-				last_checked = datetime.strptime(f.read().strip(), "%Y-%m-%d %H:%M:%S")
-			except:
-				pass
-
-	json_files = sorted(glob.glob(os.path.join(DATA_DIR, "heroes_*.json")), key=os.path.getmtime, reverse=True)
-	previous_chat_counts = {}
-	if json_files:
-		with open(json_files[0], encoding="utf-8") as f:
-			previous_data = json.load(f)
-			for pid, pdata in previous_data.items():
-				previous_chat_counts[int(pid)] = int(pdata.get("Чат", 0))
-
-	new_counts = dict(previous_chat_counts)
-	most_recent_date = last_checked
-
-	async def fetch_page(session, page_num):
-		async with session.get(f"{dom}chat?page={page_num}") as response:
-			return await response.text()
-
-	async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
-		first_html = await fetch_page(session, 1)
-		soup = BeautifulSoup(first_html, "html.parser")
-		last_page_tag = soup.select_one('a[rel="last"]')
-		max_page = int(last_page_tag["href"].split("=")[-1]) if last_page_tag else 1
-
-		stop = False
-		for page in range(1, max_page + 1):
-			html = await fetch_page(session, page)
-			soup = BeautifulSoup(html, "html.parser")
-			messages = soup.select('div[role="message"]')
-
-			for msg in messages:
-				date_tag = msg.select_one("span.text-xs.flex.space-x-2")
-				if not date_tag:
-					continue
-
-				try:
-					raw = date_tag.text.strip().split()[0:2]
-					msg_date = datetime.strptime(" ".join(raw), "%H:%M:%S %d.%m").replace(year=datetime.now().year)
-				except:
-					continue
-
-				if last_checked and msg_date <= last_checked:
-					stop = True
-					break
-
-				link = msg.find("a", class_="hero-link")
-				if link and "player=" in link["href"]:
-					player_id = int(link["href"].split("player=")[-1])
-					new_counts[player_id] = new_counts.get(player_id, 0) + 1
-
-				if not most_recent_date or msg_date > most_recent_date:
-					most_recent_date = msg_date
-
-			if stop:
-				break
-
-	if most_recent_date:
-		with open(date_file, "w") as f:
-			f.write(most_recent_date.strftime("%Y-%m-%d %H:%M:%S"))
-
-	for pid, new_value in new_counts.items():
-		if pid in results:
-			results[pid]["Чат"] = new_value
-	return results
-
-
-async def main(hero_ids, concurrent_limit):
-	sem = asyncio.Semaphore(concurrent_limit)
-	results = {}
-
-	async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
-		tasks = [fetch_hero(session, hero_id, sem) for hero_id in hero_ids]
-		tasks += [fetch_hero(session, hero_id, sem) for hero_id in range(hero_ids[-1], hero_ids[-1]+300)]
-		for task in asyncio.as_completed(tasks):
-			hero_id, data = await task
-			if data:
-				results[hero_id] = data
-
-	logging.info('Параметры героев считаны')
-
-	await parse_chat(results)
-
-	logging.info('Чат проверен')
-
-	timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-	filename = os.path.join(DATA_DIR, f"heroes_{timestamp}.json")
-	with open(filename, "w", encoding="utf-8") as f:
-		json.dump(results, f, indent=2, ensure_ascii=False)
 
 def final_ids():
 	folder = DATA_DIR
@@ -214,17 +121,46 @@ def final_ids():
 def check_site_ready(url, max_attempts=3, delay=1800):
 	for attempt in range(1, max_attempts + 1):
 		try:
-			resp = requests.get(url, headers=headers, timeout=10)
+			logging.info(f"Checking site (attempt {attempt})")
+			resp = requests.get(url, cookies=cookies, headers=headers, timeout=10)
 			resp.raise_for_status()
 			if "img/icons/hero.png" in resp.text:
+				logging.info("Checking site Success")
 				return True
+			else:
+				logging.error("Content not as expected")
+				print(resp.text)
 		except requests.exceptions.RequestException as e:
-			pass
+			logging.error(f"Request failed: {e}")
 
 		if attempt < max_attempts:
+			logging.info(f"Waiting {delay} seconds before next attempt")
 			sleep(delay)
 
+	logging.error("Site check failed after all attempts. Aborting")
 	return False
+
+async def main(hero_ids, concurrent_limit):
+	sem = asyncio.Semaphore(concurrent_limit)
+	results = {}
+
+	async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
+		tasks = [fetch_hero(session, hero_id, sem) for hero_id in hero_ids]
+		tasks += [fetch_hero(session, hero_id, sem) for hero_id in range(hero_ids[-1], hero_ids[-1]+300)]
+
+		for task in asyncio.as_completed(tasks):
+			hero_id, data = await task
+			if data:
+				results[hero_id] = data
+
+		save_cookies(session, os.path.join(SCRIPT_DIR, 'static', 'cfg.json'))
+
+	logging.info('HEROES CHECK')
+
+	timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+	filename = os.path.join(DATA_DIR, f"heroes_{timestamp}.json")
+	with open(filename, "w", encoding="utf-8") as f:
+		json.dump(results, f, indent=2, ensure_ascii=False)
 
 
 if __name__ == "__main__":

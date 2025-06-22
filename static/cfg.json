@@ -1,0 +1,44 @@
+[
+    {
+        "domain": "playwekings.mobi",
+        "expirationDate": 1784997834.462295,
+        "hostOnly": true,
+        "httpOnly": true,
+        "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
+        "path": "/",
+        "sameSite": "lax",
+        "secure": false,
+        "session": false,
+        "storeId": "1",
+        "value": "eyJpdiI6IitxdTcwV1ZTYlJQTUNnN3IxNHpzWXc9PSIsInZhbHVlIjoiK2oxeTEvNE0zSEVxRHlHU1lnNlFCRG9zTHZPdTZQTkswclRrYmRJVU1PK0JzRXVBYkJPNG9GbGdWZUNpaTRYd1JmV0ZIdld6cU9xcXRmV08wTmg5SkFzWmJnTVlkRHlPL2Q0cTZlQ0ZGKzJDQ2xWTTZqWE41eTNhb1dOTi80Z3ZwTTlpaUxod2VKRFI0QzMvQTlETjRHdEl1eVpoOFFWMm84L3RVK0sxWnNFVlc2OVBjWmRzdGhVZmRMMmRpdHNueVdMUDgzRlJmdzJxTXB1VmtCTy84d2RPdXJhQlk4RnhjNS9welg0dFZaRT0iLCJtYWMiOiI0MTA3NmFhYzk2MzNmMDY1YTAyZTdjYWQyMDAxMDliZTZmODMzNTlhMDE4MWJkZGUzZTZiNGU4MTlhYzU1NThjIiwidGFnIjoiIn0%3D",
+        "id": 1
+    },
+    {
+        "domain": "playwekings.mobi",
+        "expirationDate": 1750452234.563706,
+        "hostOnly": true,
+        "httpOnly": true,
+        "name": "wekings_session",
+        "path": "/",
+        "sameSite": "lax",
+        "secure": false,
+        "session": false,
+        "storeId": "1",
+        "value": "eyJpdiI6ImVneWsvM2IvQXhKNnF4YjBXL2x3bkE9PSIsInZhbHVlIjoiejJsb1JqYzhOaDM1Z1dRNkFNZkdxUUNSbXRmZlRXMFJrdkQxYmI5dzRpRXNMa1AxWEhYS0JBd2hXMlVkYnpaS3FCOTlqMlVsUElGKzh0UVRDR0svbUhwWTBDd2RPTnpUYjhnSHpsNm54cWg0S205VTZ2M1lhY0ZOLzZYaXZHT2giLCJtYWMiOiJmZDIwNzQzMTBhNTk4NTliMTQ1MGU1YzJiYzA2ZjhhNTNkNTEyMjcxOWE2M2M1ODg3Y2FhZTRiODM0MzY1NGY0IiwidGFnIjoiIn0%3D",
+        "id": 2
+    },
+    {
+        "domain": "playwekings.mobi",
+        "expirationDate": 1750452234.563495,
+        "hostOnly": true,
+        "httpOnly": false,
+        "name": "XSRF-TOKEN",
+        "path": "/",
+        "sameSite": "lax",
+        "secure": false,
+        "session": false,
+        "storeId": "1",
+        "value": "eyJpdiI6Imxmdmp1RFU5Q2U5OGYzaGVFdUo3SUE9PSIsInZhbHVlIjoiU3EwV1ZscXJhQVlVa0V0cHRQaWJDeDlsY0lXK0RUR1VvQXQwaHNyNStvS3lvTVJUNzF0RmZiTFBOZXVWcTVxUEZidVdEL1FvZ0luVWJ4UnpBOWFsYmlnWVpDSzUzcWlBc1E3QkJ5NnBYTXdvTlRlK3BON3lJajdGOFg5V3d4UWYiLCJtYWMiOiJmNzNkMzQwNTI2MzczMDdjYWQ4M2YyMWM1NjhlMGZlMjEyOGQ5ZTg5NTM0NzVhNTc5N2RjNzBmZjkxYzhkOWZlIiwidGFnIjoiIn0%3D",
+        "id": 3
+    }
+]

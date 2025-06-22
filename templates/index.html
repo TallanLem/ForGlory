@@ -12,6 +12,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta charset="UTF-8">
   <title>For Glory!</title>
+  <link rel="icon" href="{{ url_for('static', filename='icons/favicon.png') }}" type="image/x-icon">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -86,25 +87,25 @@
 				<details>
 					<summary>Уровень {{ group.level }} [{{ group.players|length }}]</summary>
 					<div class="details">
-						<table class="inner-table">
+						<table class="inner-table" style="table-layout: fixed; width: 100%;">
 							<thead>
 								<tr>
-									<th style="text-align: left;">№</th>
-									<th class="wide-name" style="width: 40%; text-align: left;">Ник</th>
-									<th class="tight"><img src="{{ url_for('static', filename='icons/strength.png') }}" alt="strength" class="icon"></th>
-									<th class="tight"><img src="{{ url_for('static', filename='icons/defense.png') }}" alt="defense" class="icon"></th>
-									<th class="tight"><img src="{{ url_for('static', filename='icons/dexterity.png') }}" alt="dexterity" class="icon"></th>
-									<th class="tight"><img src="{{ url_for('static', filename='icons/mastery.png') }}" alt="mastery" class="icon"></th>
-									<th class="tight"><img src="{{ url_for('static', filename='icons/vitality.png') }}" alt="vitality" class="icon"></th>
+									<th style="text-align: left; padding-right: 8px;">№</th>
+									<th class="wide-name" style="text-align: left; width: 40%;">Ник</th>
+									<th class="tight" style="text-align: left;"><img src="{{ url_for('static', filename='icons/strength.png') }}" alt="strength" class="icon"></th>
+									<th class="tight" style="text-align: left;"><img src="{{ url_for('static', filename='icons/defense.png') }}" alt="defense" class="icon"></th>
+									<th class="tight" style="text-align: left;"><img src="{{ url_for('static', filename='icons/dexterity.png') }}" alt="dexterity" class="icon"></th>
+									<th class="tight" style="text-align: left;"><img src="{{ url_for('static', filename='icons/mastery.png') }}" alt="mastery" class="icon"></th>
+									<th class="tight" style="text-align: left;"><img src="{{ url_for('static', filename='icons/vitality.png') }}" alt="vitality" class="icon"></th>
 								</tr>
 							</thead>
 							<tbody>
 								{% for player in group.players %}
 								<tr>
-									<td style="text-align: left;">{{ loop.index }}</td>
+									<td style="text-align: left;">{{ loop.index }}.</td>
 									<td class="wide-name shorten" style="text-align: left;">
-										<a href="https://playwekings.mobi/hero/detail?player={{ player.ID }}" target="_blank" style="display: inline-flex; max-width: 100%; overflow: hidden;">
-											<span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 100%;">
+										<a href="https://playwekings.mobi/hero/detail?player={{ player.ID }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
+											<span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block;">
 											{{ player.name }}
 											</span>
 											<span style="white-space: nowrap; flex-shrink: 0;">[{{ player.level }}]</span>
@@ -126,11 +127,11 @@
 		{% endfor %}
 	</tbody>
 {% endif %}
-	<table>
+	<table style="width: 100%; table-layout: fixed;">
 	  <thead>
 		{% if param != "По уровню" %}
 			<tr>
-				<th>№</th>
+				<th style="padding-right: 8px;">№</th>
 				<th class="col2" style="text-align: left;">{{ column2_name }}</th>
 				<th class="col3" style="text-align: left;">{{ column3_name }}</th>
 			</tr>
@@ -195,11 +196,18 @@
 				  {% elif idx == 3 %}
 					🥉
 				  {% else %}
-					{{ idx }}
+					{{ idx }}.
 				  {% endif %}
 				</td>
-			  <td style="text-align: left">
-				<a href="https://playwekings.mobi/hero/detail?player={{ pid }}" target="_blank">{{ name }} [{{ level }}]</a>
+			  <td style="text-align: left; left; width: 40%;">
+				<a href="https://playwekings.mobi/hero/detail?player={{ pid }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
+				<span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 100%;">
+				{{ name }}
+				</span>
+				<span style="white-space: nowrap; flex-shrink: 0; margin-left: 4px;">
+				[{{ level }}]
+				</span>
+				</a>
 			  </td>
 			    <td style="text-align: left;">
 				  {% if mode == "Общий" %}

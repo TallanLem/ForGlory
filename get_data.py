@@ -23,6 +23,14 @@ with open(os.path.join(SCRIPT_DIR, 'static', 'cfg.json'), encoding="utf-8") as f
 	cookies = {c["name"]: c["value"] for c in raw}
 	dom = 'https://{}/'.format(raw[0]['domain'])
 
+headers = {
+	"User-Agent": (
+		"Mozilla/5.0 (Linux; Android 10; SM-G973F) "
+		"AppleWebKit/537.36 (KHTML, like Gecko) "
+		"Chrome/119.0.0.0 Mobile Safari/537.36"
+	)
+}
+
 
 def parse_hero(html, hero_id):
 	soup = BeautifulSoup(html, "html.parser")

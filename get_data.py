@@ -3,6 +3,7 @@ import json, glob, os, aiohttp, sys, requests, traceback
 
 from bs4 import BeautifulSoup
 from datetime import datetime
+from time import sleep
 
 logging.basicConfig(
 	level=logging.INFO,
@@ -82,15 +83,8 @@ async def fetch_hero(session, hero_id, sem):
 					return hero_id, None
 				if response.status == 200 and "text-center text-xl" in text:
 					hero_data = parse_hero(text, hero_id)
-					uprint(f"[{hero_id}] OK — {hero_data.get('Имя', 'Неизвестно')}")
 					return hero_id, hero_data
-				else:
-					uprint(f"[{hero_id}] Пропущен (статус {response.status})")
-					current_time = datetime.now().strftime('%d.%m.%Y %H:%M:%S')
-					with open("errors.log", "a", encoding="utf-8") as log:
-						log.write("{} [{}] Пропуск\n".format(hero_id, current_time))
 		except Exception as e:
-			uprint(f"[{hero_id}] Ошибка")
 			traceback.print_exc()
 
 
@@ -133,7 +127,6 @@ async def parse_chat(results):
 
 		stop = False
 		for page in range(1, max_page + 1):
-			#~ uprint(f"Чтение страницы {page}")
 			html = await fetch_page(session, page)
 			soup = BeautifulSoup(html, "html.parser")
 			messages = soup.select('div[role="message"]')
@@ -197,8 +190,6 @@ async def main(hero_ids, concurrent_limit):
 	with open(filename, "w", encoding="utf-8") as f:
 		json.dump(results, f, indent=2, ensure_ascii=False)
 
-
-
 def final_ids():
 	folder = DATA_DIR
 	pattern = re.compile(r"heroes_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.json")
@@ -220,7 +211,26 @@ def final_ids():
 	else:
 		return None
 
+def check_site_ready(url, max_attempts=3, delay=1800):
+	for attempt in range(1, max_attempts + 1):
+		try:
+			resp = requests.get(url, headers=headers, timeout=10)
+			resp.raise_for_status()
+			if "img/icons/hero.png" in resp.text:
+				return True
+		except requests.exceptions.RequestException as e:
+			pass
+
+		if attempt < max_attempts:
+			sleep(delay)
+
+	return False
+
+
 if __name__ == "__main__":
+	if not check_site_ready(dom):
+		sys.exit(1)
+
 	hero_ids = final_ids()
 	nest_asyncio.apply()
 	asyncio.run(main(hero_ids, concurrent_limit=5))

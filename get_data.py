@@ -4,6 +4,7 @@ import json, glob, os, aiohttp, sys, requests, traceback
 from bs4 import BeautifulSoup
 from datetime import datetime
 from time import sleep
+from zoneinfo import ZoneInfo
 
 
 logging.basicConfig(
@@ -157,7 +158,8 @@ async def main(hero_ids, concurrent_limit):
 
 	logging.info('HEROES CHECK')
 
-	timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+	moscow_time = datetime.now(ZoneInfo("Europe/Moscow"))
+	timestamp = moscow_time.strftime("%Y-%m-%d_%H-%M-%S")
 	filename = os.path.join(DATA_DIR, f"heroes_{timestamp}.json")
 	with open(filename, "w", encoding="utf-8") as f:
 		json.dump(results, f, indent=2, ensure_ascii=False)

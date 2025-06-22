@@ -40,8 +40,8 @@ jobs:
             git push
           fi
 
-      # - name: Trigger Render deploy hook
-        # if: success() && env.RENDER_DEPLOY_HOOK_URL != ''
-        # run: curl -X GET "$RENDER_DEPLOY_HOOK_URL"
-        # env:
-          # RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      - name: Trigger Render deploy hook
+        if: success() && env.RENDER_DEPLOY_HOOK_URL != ''
+        run: curl -X GET "$RENDER_DEPLOY_HOOK_URL"
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}

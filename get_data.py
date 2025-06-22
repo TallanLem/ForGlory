@@ -2,9 +2,8 @@ import asyncio, nest_asyncio, re, logging
 import json, glob, os, aiohttp, sys, requests, traceback
 
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 from time import sleep
-from zoneinfo import ZoneInfo
 
 
 logging.basicConfig(
@@ -24,7 +23,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 with open(os.path.join(SCRIPT_DIR, 'static', 'cfg.json'), encoding="utf-8") as f:
 	raw = json.load(f)
 	cookies = {c["name"]: c["value"] for c in raw}
-	dom = 'https://{}/'.format(raw[0]['domain'])
+	dom = 'https://playwekings.mobi/'
 
 headers = {
 	"User-Agent": (
@@ -84,13 +83,23 @@ async def fetch_hero(session, hero_id, sem):
 	url = "{}hero/detail?player={}".format(dom, hero_id)
 	async with sem:
 		try:
-			async with session.get(url, timeout=10) as response:
+			async with session.get(url, timeout=15) as response:
 				text = await response.text()
+				if str(response.url) != url:
+					logging.warning(f"[{hero_id}] Redirected to different URL: {response.url}")
+					return hero_id, None
 				if "Что-то пошло не так" in text:
+					logging.warning(f"[{hero_id}] Страница отсутствует")
 					return hero_id, None
 				if response.status == 200 and "text-center text-xl" in text:
 					hero_data = parse_hero(text, hero_id)
+					logging.info(f"[{hero_id}] OK — {hero_data.get('Имя', 'Неизвестно')}")
+					if hero_data.get("ID") != hero_id:
+						logging.warning(f"ID mismatch: expected {hero_id}, got {hero_data.get('ID')}")
+						return hero_id, None
 					return hero_id, hero_data
+				else:
+					logging.warning(f"[{hero_id}] Пропущен (статус {response.status})")
 		except Exception as e:
 			traceback.print_exc()
 
@@ -152,13 +161,18 @@ async def main(hero_ids, concurrent_limit):
 		for task in asyncio.as_completed(tasks):
 			hero_id, data = await task
 			if data:
-				results[hero_id] = data
+				real_id = data.get("ID")
+				if real_id in results:
+					logging.warning(f"Duplicate real ID: {real_id} (already saved)")
+					continue
+				results[real_id] = data
 
-		save_cookies(session, os.path.join(SCRIPT_DIR, 'static', 'cfg.json'))
+
+		#~ save_cookies(session, os.path.join(SCRIPT_DIR, 'static', 'cfg.json'))
 
 	logging.info('HEROES CHECK')
 
-	moscow_time = datetime.now(ZoneInfo("Europe/Moscow"))
+	moscow_time = datetime.utcnow() + timedelta(hours=3)
 	timestamp = moscow_time.strftime("%Y-%m-%d_%H-%M-%S")
 	filename = os.path.join(DATA_DIR, f"heroes_{timestamp}.json")
 	with open(filename, "w", encoding="utf-8") as f:
@@ -171,7 +185,7 @@ if __name__ == "__main__":
 
 	hero_ids = final_ids()
 	nest_asyncio.apply()
-	asyncio.run(main(hero_ids, concurrent_limit=5))
+	asyncio.run(main(hero_ids, concurrent_limit=10))
 
 	json_files = sorted(glob.glob(os.path.join(DATA_DIR, "heroes_*.json")), key=os.path.getmtime, reverse=True)
 	if json_files:

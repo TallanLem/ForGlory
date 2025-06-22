@@ -65,17 +65,15 @@
 		  {% endfor %}
 		</select>
 
-		<select name="sort" onchange="this.form.submit()">
-		  {% for s in sort_options %}
-			<option value="{{ s }}" {% if s == sort_dir %}selected{% endif %}>
-			  {% if s == 'desc' %}По убыванию{% else %}По возрастанию{% endif %}
-			</option>
-		  {% endfor %}
-		</select>
 	  </div>
 
 	  <div class="filter-row">
-		<input type="text" name="filter" placeholder="Поиск по нику" value="{{ filter_value }}" onchange="this.form.submit()">
+		<input type="text" id="scroll-nick" list="nicknames" placeholder="Поиск по нику"
+		  {% if param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы") %}
+			disabled
+		  {% endif %}>
+		
+		<datalist id="nicknames"></datalist>
 	  </div>
 	</form>
 
@@ -186,8 +184,19 @@
 			</tr>
 		  {% endfor %}
 		{% else %}
-		  {% for idx, (pid, name, level, value) in enumerate(rating, 1) %}
-			<tr>
+		  {% for idx, row in enumerate(rating, 1) %}
+			{% set pid = row[0] %}
+			{% set name = row[1] %}
+			{% set level = row[2] %}
+			{% set value = row[3] %}
+			{% if mode == "Общий" %}
+			  {% set delta = row[4] if row|length > 4 else none %}
+			  {% set extra = none %}
+			{% else %}
+			  {% set delta = none %}
+			  {% set extra = row[4] if row|length > 4 else none %}
+			{% endif %}
+			<tr data-nickname="{{ name|lower }}">
 			    <td>
 				  {% if idx == 1 %}
 					🥇
@@ -211,14 +220,17 @@
 			  </td>
 			    <td style="text-align: left;">
 				  {% if mode == "Общий" %}
-					{{ value[0] }}
-					{% if value[1] is not none and value[1] != 0 %}
-					  <span style="color: {{ 'green' if value[1] > 0 else 'red' }};">
-						({{ '+' if value[1] > 0 else '-' }}{{ value[1] }})
+					{{ value }}
+					{% if delta is not none and delta != 0 %}
+					  <span style="color: {{ 'green' if delta > 0 else 'red' }};">
+						({{ '+' if delta > 0 else '-' }}{{ delta }})
 					  </span>
 					{% endif %}
 				  {% else %}
 					{{ value }}
+					{% if extra is not none %}
+					  <span style="color: #888;">({{ extra }} за бой)</span>
+					{% endif %}
 				  {% endif %}
 				</td>
 			</tr>
@@ -244,6 +256,66 @@
 				toggleButton.textContent = isDark() ? "☀️" : "🌙";
 			});
 		});
+	</script>
+	
+	<script>
+	document.addEventListener("DOMContentLoaded", () => {
+		const input = document.getElementById("scroll-nick");
+
+		input.addEventListener("keydown", function(e) {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				const query = input.value.trim().toLowerCase();
+				if (!query) return;
+
+				const rows = document.querySelectorAll('tr[data-nickname]');
+				let found = false;
+
+				for (const row of rows) {
+					if (row.dataset.nickname === query) {
+						row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						row.style.outline = '2px solid gold';
+						setTimeout(() => row.style.outline = '', 2000);
+						found = true;
+						break;
+					}
+				}
+
+				if (!found) {
+					alert("Игрок не найден.");
+				}
+			}
+		});
+	});
+	</script>
+	
+	<script>
+	document.addEventListener("DOMContentLoaded", () => {
+		const input = document.getElementById("scroll-nick");
+		const datalist = document.getElementById("nicknames");
+
+		const allNicknames = [
+			{% for row in rating %}
+				"{{ row[1]|escape }}",
+			{% endfor %}
+		];
+
+		input?.addEventListener("input", () => {
+			const val = input.value.trim().toLowerCase();
+			datalist.innerHTML = "";
+
+			if (val.length >= 2) {
+				allNicknames
+					.filter(n => n.toLowerCase().includes(val))
+					.slice(0, 20)
+					.forEach(n => {
+						const option = document.createElement("option");
+						option.value = n;
+						datalist.appendChild(option);
+					});
+			}
+		});
+	});
 	</script>
 
 </body>

@@ -41,17 +41,17 @@ def load_data(filepath):
 		return json.load(f)
 
 
-def build_rating(data, param, sort_dir, filter_value="", previous_data=None):
+def build_rating(data, param, previous_data=None):
 	if param == "Кланы по славе":
-		return build_group_rating(data, "Клан", "Слава", sort_dir, previous_data)
+		return build_group_rating(data, "Клан", "Слава", previous_data)
 	elif param == "Братства по славе":
-		return build_group_rating(data, "Братство", "Слава", sort_dir, previous_data)
+		return build_group_rating(data, "Братство", "Слава", previous_data)
 	elif param == "Кланы по статам":
-		return build_group_rating(data, "Клан", stat_keys, sort_dir, previous_data)
+		return build_group_rating(data, "Клан", stat_keys, previous_data)
 	else:
 		rating = []
 		for pid, hero in data.items():
-			if filter_value.lower() in hero.get("Имя", "").lower():
+			if hero.get("Имя", "").lower():
 				value = hero.get(param, 0)
 				name = hero.get("Имя", "Безымянный")
 				level = hero.get("Уровень", "?")
@@ -63,28 +63,38 @@ def build_rating(data, param, sort_dir, filter_value="", previous_data=None):
 					else:
 						delta = 0
 
-				rating.append((pid, name, level, [value, delta]))
+				rating.append((pid, name, level, value, delta))
 
-		reverse = sort_dir == "desc"
-		rating.sort(key=lambda x: x[3][0], reverse=reverse)
+		rating.sort(key=lambda x: x[3], reverse=1)
 		rating = rating[:1000]
 		return rating
 
 
-def build_growth_rating(data1, data2, param, sort_dir, filter_value=""):
+def build_growth_rating(data1, data2, param):
 	rating = []
 	for pid, hero2 in data2.items():
-		if filter_value.lower() not in hero2.get("Имя", "").lower():
-			continue
 		hero1 = data1.get(pid, {})
 		name = hero2.get("Имя", "Безымянный")
 		level = hero2.get("Уровень", "?")
 		v2 = hero2.get(param, 0)
 		v1 = hero1.get(param, 0)
 		diff = v2 - v1
-		rating.append((pid, name, level, diff))
-	reverse = sort_dir == "desc"
-	rating.sort(key=lambda x: x[3], reverse=reverse)
+		extra = None
+		if param.startswith("Награбил"):
+			victories2 = hero2.get("Побед", 0)
+			victories1 = hero1.get("Побед", 0)
+			fights = victories2 - victories1
+			if fights > 0:
+				extra = round(diff / fights)
+		elif param.startswith("Потерял"):
+			defeats2 = hero2.get("Поражений", 0)
+			defeats1 = hero1.get("Поражений", 0)
+			fights = defeats2 - defeats1
+			if fights > 0:
+				extra = round(diff / fights)
+
+		rating.append((pid, name, level, diff, extra))
+	rating.sort(key=lambda x: x[3], reverse=1)
 	rating = rating[:1000]
 	return rating
 
@@ -120,7 +130,7 @@ def get_level_ratings(data):
 		for level in sorted_levels
 	]
 
-def build_group_rating(data, group_key, param, sort_dir, previous_data=None):
+def build_group_rating(data, group_key, param, previous_data=None):
 	from operator import itemgetter
 
 	grouped = {}
@@ -150,7 +160,7 @@ def build_group_rating(data, group_key, param, sort_dir, previous_data=None):
 
 	result = []
 	for group_name, members in grouped.items():
-		members_sorted = sorted(members, key=lambda h: h["value"], reverse=(sort_dir == "desc"))
+		members_sorted = sorted(members, key=lambda h: h["value"], reverse=1)
 
 		for i, member in enumerate(members_sorted, start=1):
 			member["_rank"] = i
@@ -165,7 +175,7 @@ def build_group_rating(data, group_key, param, sort_dir, previous_data=None):
 			"members": members_sorted
 		})
 
-	result.sort(key=itemgetter("score"), reverse=(sort_dir == "desc"))
+	result.sort(key=itemgetter("score"), reverse=1)
 	return result
 
 
@@ -173,8 +183,6 @@ def build_group_rating(data, group_key, param, sort_dir, previous_data=None):
 def index():
 	json_files = get_all_json_files()
 	selected_param = "Слава"
-	sort_dir = "desc"
-	filter_value = ""
 	selected_file = json_files[0] if json_files else None
 	file1 = file2 = None
 	rating = []
@@ -185,8 +193,6 @@ def index():
 	mode = request.form.get("mode") or "Общий"
 
 	selected_param = request.form.get("param", selected_param)
-	sort_dir = request.form.get("sort", sort_dir)
-	filter_value = request.form.get("filter", "").strip()
 
 	column2_name = "Игрок"
 	column3_name = selected_param
@@ -224,7 +230,7 @@ def index():
 		if selected_param == "По уровню":
 			rating = []
 		else:
-			rating = build_rating(data, selected_param, sort_dir, filter_value, prev_file)
+			rating = build_rating(data, selected_param, prev_file)
 
 		dt = extract_datetime_from_filename(selected_file)
 		filename_display = dt.strftime("%d.%m.%Y %H:%M") if dt else selected_file
@@ -241,7 +247,7 @@ def index():
 		if file1 and file2 and os.path.isfile(file1) and os.path.isfile(file2):
 			data1 = load_data(file1)
 			data2 = load_data(file2)
-			rating = build_growth_rating(data1, data2, selected_param, sort_dir, filter_value)
+			rating = build_growth_rating(data1, data2, selected_param)
 			dt1 = extract_datetime_from_filename(file1)
 			dt2 = extract_datetime_from_filename(file2)
 			filename_display = f"{dt1.strftime('%d.%m.%Y %H:%M')} → {dt2.strftime('%d.%m.%Y %H:%M')}" if dt1 and dt2 else ""
@@ -262,7 +268,6 @@ def index():
 						   rating=rating,
 						   level_ratings=level_ratings,
 						   param=selected_param,
-						   sort_dir=sort_dir,
 						   mode=mode,
 						   filename_display=filename_display,
 						   json_files=json_files,
@@ -273,8 +278,6 @@ def index():
 						   column2_name=column2_name,
 						   column3_name=column3_name,
 						   param_selectable=param_selectable,
-						   sort_options=sort_options,
-						   filter_value=filter_value,
 						   files_display=files_display,
 						   extract_datetime_from_filename=extract_datetime_from_filename,
 						   enumerate=enumerate)
@@ -282,5 +285,5 @@ def index():
 
 
 if __name__ == "__main__":
-	app.run()
-	#~ app.run(debug=True)
+	#~ app.run()
+	app.run(debug=True)

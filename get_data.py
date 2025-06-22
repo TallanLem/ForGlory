@@ -119,7 +119,7 @@ def final_ids():
 	else:
 		return None
 
-def check_site_ready(url, max_attempts=3, delay=1800):
+def check_site_ready(url, max_attempts=15, delay=600):
 	for attempt in range(1, max_attempts + 1):
 		try:
 			logging.info(f"Checking site (attempt {attempt})")

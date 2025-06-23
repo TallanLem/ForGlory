@@ -57,6 +57,17 @@
 		  </select>
 		{% endif %}
 	  </div>
+	  
+		{% if diff_hours %}
+		  <div style="font-size: 0.9em; color: #888; margin-top: -5px; margin-bottom: 6px;">
+			({% if mode == 'Общий' %}+{% endif %}прирост за {{ diff_hours }}
+			{{
+			  ' час' if diff_hours % 10 == 1 and diff_hours % 100 != 11 else
+			  ' часа' if diff_hours % 10 in [2,3,4] and diff_hours % 100 not in [12,13,14] else
+			  ' часов'
+			}})
+		  </div>
+		{% endif %}
 
 	  <div class="controls-row row-inline">
 		<select name="param" onchange="this.form.submit()">
@@ -83,7 +94,7 @@
 		<tr>
 			<td colspan="3">
 				<details>
-					<summary>Уровень {{ group.level }} [{{ group.players|length }}]</summary>
+					<summary>Уровень {{ group.level }} ({{ group.players|length }} игроков)</summary>
 					<div class="details">
 						<table class="inner-table" style="table-layout: fixed; width: 100%;">
 							<thead>
@@ -101,12 +112,12 @@
 								{% for player in group.players %}
 								<tr>
 									<td style="text-align: left;">{{ loop.index }}.</td>
-									<td class="wide-name shorten" style="text-align: left;">
+									<td class="wide-name shorten" style="text-align: left; padding-right: 6px;">
 										<a href="https://playwekings.mobi/hero/detail?player={{ player.ID }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
 											<span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block;">
 											{{ player.name }}
 											</span>
-											<span style="white-space: nowrap; flex-shrink: 0;">[{{ player.level }}]</span>
+											<!-- <span style="white-space: nowrap; flex-shrink: 0;">[{{ player.level }}]</span> -->
 										</a>
 									</td>
 									<td class="tight">{{ player.strength }}</td>
@@ -129,9 +140,9 @@
 	  <thead>
 		{% if param != "По уровню" %}
 			<tr>
-				<th style="padding-right: 8px;">№</th>
+				<th style="padding-right: 15px;">№</th>
 				<th class="col2" style="text-align: left;">{{ column2_name }}</th>
-				<th class="col3" style="text-align: left;">{{ column3_name }}</th>
+				<th class="col3" style="text-align: center;">{{ column3_name }}</th>
 			</tr>
 		{% endif %}
 	  </thead>
@@ -154,26 +165,28 @@
 				<details>
 				  <summary>{{ row.name }}</summary>
 				  <div class="details">
-					<table class="inner-table">
+					<table class="inner-table" style="table-layout: fixed; width: 100%;">
 						{% for hero in row.members %}
 							<tr>
 								<td>{{ hero._rank }}.</td>
 								<td>
-									<a href="https://playwekings.mobi/hero/detail?player={{ hero.ID }}" target="_blank" style="display: inline-flex; max-width: 100%; overflow: hidden;">
-										<span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 100%;">
-										{{ hero.Имя }}
-										</span>
-										<span style="white-space: nowrap; flex-shrink: 0;">[{{ hero.Уровень }}]</span>
-									</a>
+								  <a href="https://playwekings.mobi/hero/detail?player={{ hero.ID }}" target="_blank">
+									<span>
+									  {{ hero.Имя }}
+									</span>
+									<span style="">
+									  [{{ hero.Уровень }}]
+									</span>
+								  </a>
 								</td>
-								<td class="heroes">{{ hero.value }}</td>
+								<td class="heroes" style="text-align: right;">{{ hero.value }}</td>
 							</tr>
 						{% endfor %}
 					</table>
 				  </div>
 				</details>
 			  </td>
-			  <td>
+			  <td class="score-cell" style="text-align: center;">
 				  {{ row.score }}
 				  {% if row.delta is not none and row.delta != 0 %}
 					<span style="color: {{ 'green' if row.delta > 0 else 'red' }};">
@@ -218,7 +231,7 @@
 				</span>
 				</a>
 			  </td>
-			    <td style="text-align: left;">
+			    <td style="text-align: center;">
 				  {% if mode == "Общий" %}
 					{{ value }}
 					{% if delta is not none and delta != 0 %}

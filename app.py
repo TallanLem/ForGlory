@@ -20,8 +20,6 @@ param_options = [
 	"Братства по славе", "Кланы по славе", "Кланы по статам"
 ]
 
-sort_options = ["desc", "asc"]
-
 
 def extract_datetime_from_filename(filename):
 	match = re.search(r"heroes_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})", filename)
@@ -107,7 +105,16 @@ def get_level_ratings(data):
 			grouped[hero["Уровень"]].append(hero)
 
 	for level in grouped:
-		grouped[level].sort(key=lambda h: h.get("Сила", 0), reverse=True)
+		grouped[level].sort(
+					key=lambda h: (
+						h.get("Сила", 0),
+						h.get("Защита", 0),
+						h.get("Ловкость", 0),
+						h.get("Мастерство", 0),
+						h.get("Живучесть", 0)
+					),
+					reverse=True
+				)
 
 	sorted_levels = sorted(grouped.keys(), reverse=True)
 
@@ -116,6 +123,7 @@ def get_level_ratings(data):
 			"level": level,
 			"players": [
 				{
+					"ID": hero.get("ID") or hero.get("id"),
 					"name": hero.get("Имя", "Безымянный"),
 					"level": level,
 					"strength": hero.get("Сила", 0),
@@ -233,6 +241,11 @@ def index():
 			rating = build_rating(data, selected_param, prev_file)
 
 		dt = extract_datetime_from_filename(selected_file)
+		diff_hours = None
+		if dt and prev_file:
+			prev_dt = extract_datetime_from_filename(json_files[file_index + 1])
+			if prev_dt:
+				diff_hours = round((dt - prev_dt).total_seconds()/3600, 1)
 		filename_display = dt.strftime("%d.%m.%Y %H:%M") if dt else selected_file
 
 	elif mode == "Прирост":
@@ -250,6 +263,8 @@ def index():
 			rating = build_growth_rating(data1, data2, selected_param)
 			dt1 = extract_datetime_from_filename(file1)
 			dt2 = extract_datetime_from_filename(file2)
+			if dt1 and dt2:
+				diff_hours = round((dt2 - dt1).total_seconds()/3600, 1)
 			filename_display = f"{dt1.strftime('%d.%m.%Y %H:%M')} → {dt2.strftime('%d.%m.%Y %H:%M')}" if dt1 and dt2 else ""
 	else:
 		selected_param = request.args.get("param", param_options[0])
@@ -280,7 +295,8 @@ def index():
 						   param_selectable=param_selectable,
 						   files_display=files_display,
 						   extract_datetime_from_filename=extract_datetime_from_filename,
-						   enumerate=enumerate)
+						   enumerate=enumerate,
+						   diff_hours=diff_hours)
 
 
 

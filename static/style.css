@@ -243,6 +243,40 @@ details > summary {
 	th:nth-child(3) {
 	  white-space: nowrap;
 	  overflow: visible;
-	  width: auto;
+	  width: auto; 
 	}
+	
+	  .inner-table td {
+		font-size: 12px;
+	  }
+
+	  .inner-table td.heroes {
+		width: 30%;
+		white-space: nowrap;
+		font-size: 12px;
+		padding-left: 4px;
+			
+	  }
+
+	  .inner-table td a {
+		display: flex;
+		flex-wrap: nowrap;
+		align-items: center;
+		width: 100%;
+		overflow: hidden;
+	  }
+
+	  .inner-table td a span:first-child {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	  }
+
+	  .inner-table td a span:last-child {
+		flex-shrink: 0;
+		margin-left: 6px;
+		white-space: nowrap;
+	  }
 }

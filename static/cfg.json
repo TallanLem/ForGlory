@@ -1,7 +1,7 @@
 [
     {
         "domain": "playwekings.mobi",
-        "expirationDate": 1785187706.628808,
+        "expirationDate": 1785356863.18263,
         "hostOnly": true,
         "httpOnly": true,
         "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
@@ -10,12 +10,12 @@
         "secure": false,
         "session": false,
         "storeId": "1",
-        "value": "eyJpdiI6IjRXdUtZTE5vaHpLcXh5K0RUaFpKRFE9PSIsInZhbHVlIjoiQXlJZ2FXaVEyZUJ3WFRTYVZoTXNMa3FCY3JDakRUTk1EQVRTT2c1WGFkcVl0QXRLUFNRVnJhWUZxSUJvQTJDL2R4QkZHS1NqblpQeGxlTm9ENGhNSC91eS9wdjZKZUJ5NjZqTnpSUGVOVTg3TjRiUFdLYnBWRUlFSTBJRlU2YzNPZHJwcmlYSk91TzgzNkF3TVRtVjdYRDdBT2FBOWRpZVN4dzlYc0MvenpGTUdSVVNNdEVCekdYVWhrRWhEVy9EamtGbGgxSGQ5TmNuUExtMUZIcFIvSzI4eWQ3OEplYW56TnRoelp0b05hcz0iLCJtYWMiOiI2M2FmMTA1MThjNDkzNzk2ODgyZmVjOGYyYWVkY2VjYWNlMjY4ZWVjZTY4MmQwNTM1YzQ0NWYxY2MwNTM1MjczIiwidGFnIjoiIn0%3D",
+        "value": "eyJpdiI6IktvSnA3TUxMTDlpVGIxc1BidVoyYlE9PSIsInZhbHVlIjoicTZYdDgyTS9Ea0VlWE5GQnRzMStFSGo3b0xkaVFZM2Nka2paWWdCUE5Wemh0QkNQaW9aSEJreTdJdktQYU5BOWQwZlF5akRtekg3blQwaUpMdExnZG05NmV5eEhOd2E4aUpVaE1IRmk1amhDaXBXb0dLZTNUZ2pCMjV2UTUwSzBoYUIyYVNHaTRhWWY2ZVQ0T0RYZ2d4dW5QWWdYc1hrTHhYUXlrbXd2Ti92VXN1YWhjN3poRURsMzdvMnczVlNhc1M0Wm9YeDgxTHpzcklDaWF3K2hWU0N6aE5hNmtQZ25HdHFmVTFYRDVVRT0iLCJtYWMiOiIwOTc2NmUzYWMzM2E4NGYwMDFkMzcxOTExZWI3NTgzNmNlYmNiYjc3MjQxNmYyNGM3OGQ0YjE5NjE1NjQxNzU0IiwidGFnIjoiIn0%3D",
         "id": 1
     },
     {
         "domain": "playwekings.mobi",
-        "expirationDate": 1750642107.056065,
+        "expirationDate": 1750811263.266572,
         "hostOnly": true,
         "httpOnly": true,
         "name": "wekings_session",
@@ -24,12 +24,12 @@
         "secure": false,
         "session": false,
         "storeId": "1",
-        "value": "eyJpdiI6IkIxTklPckVZTytoMFhTMHFzV3kwdmc9PSIsInZhbHVlIjoiWm1tMnRzUU81TFBvci9CWFNEcXl6TlFhZ2hza3ZpUWdhdGVGYU9ueVhsYzV6OXc0VVZKcDB5ZWluN0QzaFd6dE9YQjNxNDBibmwzd0dENWE5UXdlSC9JNHNWNWZId3pvNW5HUjBYYkEwbFU1dGtCNTJTZ0NMb3Bjd3d6S3FqMXUiLCJtYWMiOiIxOWRhNDk5ZTFhMmQzYmU1MGE2NmUwZTIzYzQ1YzlkZjVlZmZjYjJjYjFjNWFiZGRmMTA5ODI0ZWQzODMzNDhjIiwidGFnIjoiIn0%3D",
+        "value": "eyJpdiI6IkY3VXFOQnh3T2VPNitGcGhjaENDa2c9PSIsInZhbHVlIjoiYUpRSXVtM0srZFVMSEp6dFNBOFlxL3p3SzF4WmxhaHVkazh3aVltY1ZWMHVBYTU5N0hxQnlGRStGcGpaVXRlbjQvbVVxVzlDc1crcFlrUE13RUEzWEsxc0ZrNGFReldpZW55VTl1NXE5K21uZFZ5dkxnR3IzeE5CNVl2WkszMXEiLCJtYWMiOiIxMDJhNDhiMTU2YWNkNmY5NmMwMzRkZWFjYWJiZGE5MDMwN2RmNDNhZjk0ZjNlOGFjMzI5NWM2OTU5YzM0ZDJmIiwidGFnIjoiIn0%3D",
         "id": 2
     },
     {
         "domain": "playwekings.mobi",
-        "expirationDate": 1750642107.055859,
+        "expirationDate": 1750811263.266513,
         "hostOnly": true,
         "httpOnly": false,
         "name": "XSRF-TOKEN",
@@ -38,7 +38,7 @@
         "secure": false,
         "session": false,
         "storeId": "1",
-        "value": "eyJpdiI6ImpEbXdGOHg0WTBLa3hLWEEzM2xMTlE9PSIsInZhbHVlIjoieTFUTEQ4RFc1U0JJVkp6U3Z6N2tFNm12U042K2FPcG5LT3JNVWlrdjB6RzQwRjljVUtDWVRhRW9EcnZXdUZtWmozSTh2SFVFcDNEc3dqU1kvRzZCamVOS2FLL09QNkRuaWxPM0p1YkI2empCN0pwaVlXWmtpaDJJVTJUcjNPdHUiLCJtYWMiOiJiMTY4NTBkNWQwOTliYzFlYTkyN2NkZTg3MDIwYzIxY2NlNjFlYzdiMmMwYTg4M2U3OWRjNjUxYzVjNTJjY2FlIiwidGFnIjoiIn0%3D",
+        "value": "eyJpdiI6Ik9wSHBwVUpWMmVydWxDUGREb1BJUVE9PSIsInZhbHVlIjoiczUxcFA3bjkyZTNMRnhRWDJCTjJpTElBazFaamlKSk5haGdpYWdUZVJkb2FYbVNkQnBSNXNtVEhjMVp6SlplU3B0ckdPRU5qQksvQk8vZGV6WTRndmhKd2s0UTdVQ1FNODVKeGZnajhkZEQvOVl6VUhNV3lneW5ocVpIUUlhS3kiLCJtYWMiOiI2NmExMDc3ODE5MTgwMmE0NzAxYTZlYmM3NTJiNzVmZWQwYmExMTA0NzdkYmNkYWNkZDgxZDMwZmIxNDhkZmRiIiwidGFnIjoiIn0%3D",
         "id": 3
     }
 ]

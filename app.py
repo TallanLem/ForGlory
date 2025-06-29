@@ -140,50 +140,57 @@ def get_level_ratings(data):
 
 def build_group_rating(data, group_key, param, previous_data=None):
 	from operator import itemgetter
+	import collections
 
-	grouped = {}
+	def group_sum(dataset):
+		groups = collections.defaultdict(int)
+		for hero in dataset.values():
+			group = hero.get(group_key)
+			if not group or "не состоит" in group.lower():
+				continue
 
+			if isinstance(param, str):
+				value = hero.get(param, 0)
+			elif isinstance(param, list):
+				value = sum(hero.get(p, 0) for p in param)
+			else:
+				value = 0
+
+			groups[group] += value
+		return groups
+
+	current_groups = group_sum(data)
+
+	prev_groups = group_sum(previous_data) if previous_data else {}
+
+	members_by_group = collections.defaultdict(list)
 	for hero in data.values():
 		group = hero.get(group_key)
 		if not group or "не состоит" in group.lower():
 			continue
 
-		hero_id = str(hero.get("id") or hero.get("ID") or "")
-
-		if isinstance(param, str):
-			value = hero.get(param, 0)
-			value_old = previous_data.get(hero_id, {}).get(param, 0) if previous_data else 0
-		elif isinstance(param, list):
-			value = sum(hero.get(p, 0) for p in param)
-			value_old = sum(previous_data.get(hero_id, {}).get(p, 0) for p in param) if previous_data else 0
-		else:
-			value = 0
-			value_old = 0
-
-		delta = value - value_old
-
+		value = hero.get(param, 0) if isinstance(param, str) else sum(hero.get(p, 0) for p in param)
 		hero["value"] = value
-		hero["delta"] = delta
-		grouped.setdefault(group, []).append(hero)
+		members_by_group[group].append(hero)
+
+	for members in members_by_group.values():
+		members.sort(key=lambda h: h["value"], reverse=True)
+		for i, h in enumerate(members, 1):
+			h["_rank"] = i
 
 	result = []
-	for group_name, members in grouped.items():
-		members_sorted = sorted(members, key=lambda h: h["value"], reverse=1)
-
-		for i, member in enumerate(members_sorted, start=1):
-			member["_rank"] = i
-
-		group_score = sum(h["value"] for h in members_sorted)
-		group_delta = sum(h.get("delta", 0) for h in members_sorted)
-
+	all_groups = set(current_groups) | set(prev_groups)
+	for g in all_groups:
+		score_now  = current_groups.get(g, 0)
+		score_prev = prev_groups.get(g, 0)
 		result.append({
-			"name": group_name,
-			"score": group_score,
-			"delta": group_delta,
-			"members": members_sorted
+			"name":   g,
+			"score":  score_now,
+			"delta":  score_now - score_prev,
+			"members": members_by_group.get(g, [])
 		})
 
-	result.sort(key=itemgetter("score"), reverse=1)
+	result.sort(key=itemgetter("score"), reverse=True)
 	return result
 
 

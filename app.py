@@ -203,6 +203,7 @@ def index():
 	rating = []
 	level_ratings = []
 	filename_display = ""
+	selected_level = request.form.get("level")
 	files_display = [(f, extract_datetime_from_filename(f).strftime("%d.%m.%Y %H:%M")) for f in json_files]
 
 	mode = request.form.get("mode") or "Общий"
@@ -241,10 +242,14 @@ def index():
 		else:
 			prev_file = None
 
-		level_ratings = get_level_ratings(data)
 		if selected_param == "По уровню":
 			rating = []
+			level_ratings = get_level_ratings(data)
 		else:
+			if selected_level and selected_level != "Все":
+				selected_level = int(selected_level)
+				data = {pid: h for pid, h in data.items() if h.get("Уровень") == selected_level}
+
 			rating = build_rating(data, selected_param, prev_file)
 
 		dt = extract_datetime_from_filename(selected_file)
@@ -267,6 +272,11 @@ def index():
 		if file1 and file2 and os.path.isfile(file1) and os.path.isfile(file2):
 			data1 = load_data(file1)
 			data2 = load_data(file2)
+
+			if selected_level and selected_level != "Все":
+				selected_level = int(selected_level)
+				data2 = {pid: h for pid, h in data2.items() if h.get("Уровень") == selected_level}
+
 			rating = build_growth_rating(data1, data2, selected_param)
 			dt1 = extract_datetime_from_filename(file1)
 			dt2 = extract_datetime_from_filename(file2)
@@ -276,6 +286,7 @@ def index():
 	else:
 		selected_param = request.args.get("param", param_options[0])
 
+	all_levels = sorted({hero.get("Уровень") for d in [load_data(selected_file)] if d for hero in d.values() if isinstance(hero.get("Уровень"), int)}, reverse=True)
 
 	param_selectable = [
 			p for p in param_options
@@ -303,7 +314,9 @@ def index():
 						   files_display=files_display,
 						   extract_datetime_from_filename=extract_datetime_from_filename,
 						   enumerate=enumerate,
-						   diff_hours=diff_hours)
+						   diff_hours=diff_hours,
+						   all_levels=all_levels,
+						   selected_level=selected_level)
 
 
 

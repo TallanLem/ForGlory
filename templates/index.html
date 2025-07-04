@@ -163,7 +163,7 @@
 				</td>
 			  <td>
 				<details>
-				  <summary>{{ row.name }}</summary>
+				  <summary>{{ row.name }} ({{ row.members|length }})</summary>
 				  <div class="details">
 					<table class="inner-table" style="table-layout: fixed; width: 100%;">
 						{% for hero in row.members %}

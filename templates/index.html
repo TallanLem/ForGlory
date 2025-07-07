@@ -17,11 +17,6 @@
 </head>
 <body>
   <div class="container">
-	<div class="header-row">
-	  <h1>Рейтинг</h1>
-	  <button id="theme-toggle" class="theme-toggle">🌙</button>
-	</div>
-
 	<form method="POST" class="form-container">
 		<div class="mode-toggle">
 		  <input type="radio" id="tab1" name="mode" value="Общий"
@@ -84,8 +79,11 @@
 			style="flex: 1; min-width: 150px; padding: 4px 8px;"
 			{% if param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы") %}
 			  disabled
-			{% endif %}>
+			{% endif %}
+			onkeydown="handleEnterKey(event)">
+		  
 		  <datalist id="nicknames"></datalist>
+		  <button type="button" onclick="searchByNickname()" style="font-size: 16px;">🔍</button>
 
 		  <label for="level-select" style="white-space: nowrap;">Уровень:</label>
 		  <select name="level" id="level-select" onchange="this.form.submit()"
@@ -101,6 +99,11 @@
 		</div>
 	  
 	</form>
+	
+	 <button id="theme-toggle" class="theme-toggle"
+          style="position: absolute; right: 0; top: 0; font-size: 24px;">
+    🌙
+     </button>
 
 {% if param == "По уровню" and mode == "Общий" %}
 	<tbody>
@@ -286,34 +289,35 @@
 	</script>
 	
 	<script>
-	document.addEventListener("DOMContentLoaded", () => {
+	  function handleEnterKey(event) {
+		if (event.key === "Enter") {
+		  event.preventDefault();
+		  searchByNickname();
+		}
+	  }
+
+	  function searchByNickname() {
 		const input = document.getElementById("scroll-nick");
+		const query = input.value.trim().toLowerCase();
+		if (!query) return;
 
-		input.addEventListener("keydown", function(e) {
-			if (e.key === "Enter") {
-				e.preventDefault();
-				const query = input.value.trim().toLowerCase();
-				if (!query) return;
+		const rows = document.querySelectorAll('tr[data-nickname]');
+		let found = false;
 
-				const rows = document.querySelectorAll('tr[data-nickname]');
-				let found = false;
+		for (const row of rows) {
+		  if (row.dataset.nickname === query) {
+			row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			row.style.outline = '2px solid gold';
+			setTimeout(() => row.style.outline = '', 3000);
+			found = true;
+			break;
+		  }
+		}
 
-				for (const row of rows) {
-					if (row.dataset.nickname === query) {
-						row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-						row.style.outline = '2px solid gold';
-						setTimeout(() => row.style.outline = '', 2000);
-						found = true;
-						break;
-					}
-				}
-
-				if (!found) {
-					alert("Игрок не найден.");
-				}
-			}
-		});
-	});
+		if (!found) {
+		  alert("Игрок не найден.");
+		}
+	  }
 	</script>
 	
 	<script>

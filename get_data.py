@@ -134,7 +134,7 @@ def check_site_ready(url, max_attempts=15, delay=600):
 			logging.info(f"Checking site (attempt {attempt})")
 			resp = requests.get(url, cookies=cookies, headers=headers, timeout=10)
 			resp.raise_for_status()
-			if "img/icons/hero.png" in resp.text:
+			if 'hero/profile' in resp.text:
 				logging.info("Checking site Success")
 				return True
 			else:

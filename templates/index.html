@@ -134,7 +134,6 @@
 											<span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block;">
 											{{ player.name }}
 											</span>
-											<!-- <span style="white-space: nowrap; flex-shrink: 0;">[{{ player.level }}]</span> -->
 										</a>
 									</td>
 									<td class="tight">{{ player.strength }}</td>
@@ -180,7 +179,12 @@
 				</td>
 			  <td>
 				<details>
-				  <summary>{{ row.name }} ({{ row.members|length }})</summary>
+				  <summary style="display: inline-flex; width: 100%; overflow: hidden;">
+					  <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; padding-right: 6px;">
+						{{ row.name }}
+					  </span>
+					  <span style="flex-shrink: 0;">({{ row.members|length }})</span>
+				  </summary>
 				  <div class="details">
 					<table class="inner-table" style="table-layout: fixed; width: 100%;">
 						{% for hero in row.members %}

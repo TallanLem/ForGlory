@@ -79,8 +79,27 @@ def parse_hero(html, hero_id):
 
 	return data
 
+def parse_kill_beasts(html, hero_id):
+	soup = BeautifulSoup(html, 'html.parser')
+
+	achievements = soup.find_all('div', class_='flex flex-col p-2 leading-5')
+
+	for achievement in achievements:
+
+		name_tag = achievement.find('div', class_='font-bold item-header pb-1')
+		if name_tag and name_tag.text.strip() == 'Повелитель Зверей':
+			spans = achievement.select('span:has(b.font-semibold)')[:2]
+			status_match = re.search(r'(\d+)\s+из\s+(\d+)', spans[0].text)
+			level_match = re.search(r'(\d+)', spans[1].text)
+			level =  int(level_match.group(1))
+			current, total = int(status_match.group(1)), int(status_match.group(2))
+			kills = level * (4 * level - 2) // 2 + current
+			return kills
+
+
 async def fetch_hero(session, hero_id, sem):
 	url = "{}hero/detail?player={}".format(dom, hero_id)
+	achievements_url = f"{dom}achievements?player={hero_id}"
 	async with sem:
 		try:
 			async with session.get(url, timeout=15) as response:
@@ -93,6 +112,14 @@ async def fetch_hero(session, hero_id, sem):
 					return hero_id, None
 				if response.status == 200 and "text-center text-xl" in text:
 					hero_data = parse_hero(text, hero_id)
+
+					#ачивки
+					async with session.get(achievements_url, timeout=15) as ach_response:
+						ach_text = await ach_response.text()
+						kills = parse_kill_beasts(ach_text, hero_id)
+						if kills is not None:
+							hero_data["Убито зверей"] = kills
+
 					logging.info(f"[{hero_id}] OK — {hero_data.get('Имя', 'Неизвестно')}")
 					if hero_data.get("ID") != hero_id:
 						logging.warning(f"ID mismatch: expected {hero_id}, got {hero_data.get('ID')}")

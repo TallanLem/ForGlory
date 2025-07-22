@@ -2,6 +2,9 @@ import logging, os, json, glob, re
 
 from flask import Flask, render_template, request
 from datetime import datetime
+from operator import itemgetter
+import collections
+from collections import defaultdict
 
 
 app = Flask(__name__)
@@ -97,8 +100,6 @@ def build_growth_rating(data1, data2, param):
 	return rating
 
 def get_level_ratings(data):
-	from collections import defaultdict
-
 	grouped = defaultdict(list)
 	for hero in data.values():
 		if "Уровень" in hero and "Сила" in hero:
@@ -142,12 +143,33 @@ def build_group_rating(data, group_key, param, previous_data=None):
 	from operator import itemgetter
 	import collections
 
-	def group_sum(dataset):
-		groups = collections.defaultdict(int)
+	id_key = "clan_id" if group_key == "Клан" else (
+		"brotherhood_id" if group_key == "Братство" else None)
+
+	def is_id_mode(dataset):
+		return any(id_key in h for h in dataset.values())
+
+	use_id_mode = is_id_mode(data)
+
+	def build_groups(dataset, id_mode):
+		groups = {}
 		for hero in dataset.values():
-			group = hero.get(group_key)
-			if not group or "не состоит" in group.lower():
-				continue
+			if id_mode:
+				group_id = hero.get(id_key, 0)
+				group_name = hero.get(group_key, "").strip()
+				if group_id and group_name:
+					key = group_id
+					if key not in groups:
+						groups[key] = {"name": group_name, "score": 0, "members": []}
+				else:
+					continue
+			else:
+				group_name = hero.get(group_key, "").strip()
+				if not group_name or "не состоит" in group_name.lower():
+					continue
+				key = group_name
+				if key not in groups:
+					groups[key] = {"name": group_name, "score": 0, "members": []}
 
 			if isinstance(param, str):
 				value = hero.get(param, 0)
@@ -156,42 +178,47 @@ def build_group_rating(data, group_key, param, previous_data=None):
 			else:
 				value = 0
 
-			groups[group] += value
+			hero["value"] = value
+			groups[key]["score"] += value
+			groups[key]["members"].append(hero)
+
+		for g in groups.values():
+			g["members"].sort(key=lambda h: h["value"], reverse=True)
+			for i, h in enumerate(g["members"], 1):
+				h["_rank"] = i
+
 		return groups
 
-	current_groups = group_sum(data)
+	current = build_groups(data, use_id_mode)
+	previous = build_groups(previous_data, use_id_mode) if previous_data else {}
 
-	prev_groups = group_sum(previous_data) if previous_data else {}
-
-	members_by_group = collections.defaultdict(list)
-	for hero in data.values():
-		group = hero.get(group_key)
-		if not group or "не состоит" in group.lower():
-			continue
-
-		value = hero.get(param, 0) if isinstance(param, str) else sum(hero.get(p, 0) for p in param)
-		hero["value"] = value
-		members_by_group[group].append(hero)
-
-	for members in members_by_group.values():
-		members.sort(key=lambda h: h["value"], reverse=True)
-		for i, h in enumerate(members, 1):
-			h["_rank"] = i
+	all_keys = set(current) | set(previous)
 
 	result = []
-	all_groups = set(current_groups) | set(prev_groups)
-	for g in all_groups:
-		score_now  = current_groups.get(g, 0)
-		score_prev = prev_groups.get(g, 0)
+	for key in all_keys:
+		curr_group = current.get(key, {})
+		prev_group = previous.get(key, {})
+
+		name = curr_group.get("name") or prev_group.get("name") or str(key)
+		score_now = curr_group.get("score", 0)
+		score_prev = prev_group.get("score", 0)
+		members_now = curr_group.get("members", [])
+		count_now = len(members_now)
+		count_prev = len(prev_group.get("members", []))
+
 		result.append({
-			"name":   g,
-			"score":  score_now,
-			"delta":  score_now - score_prev,
-			"members": members_by_group.get(g, [])
+			"name": name,
+			"score": score_now,
+			"delta": score_now - score_prev,
+			"count": count_now,
+			"count_delta": count_now - count_prev,
+			"members": members_now
 		})
 
 	result.sort(key=itemgetter("score"), reverse=True)
 	return result
+
+
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -321,5 +348,5 @@ def index():
 
 
 if __name__ == "__main__":
-	app.run()
-	#~ app.run(debug=True)
+	#~ app.run()
+	app.run(debug=True)

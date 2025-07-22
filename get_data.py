@@ -56,6 +56,30 @@ def parse_hero(html, hero_id):
 			continue
 
 		icon = spans[0].find("img")
+		content = spans[1]
+
+		if "Клан:" in content.text:
+			link = content.find("a", href=re.compile(r"/clan/info\?id=\d+"))
+			if link:
+				clan_id = re.search(r"id=(\d+)", link["href"]).group(1)
+				data["Клан"] = link.text.strip()
+				data["clan_id"] = int(clan_id)
+			else:
+				data["Клан"] = "не состоит"
+				data["clan_id"] = 0
+			continue
+
+		if "Братство:" in content.text:
+			link = content.find("a", href=re.compile(r"/brotherhood/info\?id=\d+"))
+			if link:
+				bh_id = re.search(r"id=(\d+)", link["href"]).group(1)
+				data["Братство"] = link.text.strip()
+				data["brotherhood_id"] = int(bh_id)
+			else:
+				data["Братство"] = "не состоит"
+				data["brotherhood_id"] = 0
+			continue
+
 		text = spans[1].text.strip()
 
 		if ":" in text:

@@ -183,7 +183,9 @@
 					  <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; padding-right: 6px;">
 						{{ row.name }}
 					  </span>
-					  <span style="flex-shrink: 0;">({{ row.members|length }})</span>
+						<span style="flex-shrink: 0;">
+						  ({{ row.members|length }}{% if row.count_delta is not none and row.count_delta != 0 %}<span style="color: {{ 'green' if row.count_delta > 0 else 'red' }};">{{ '+' if row.count_delta > 0 else '' }}{{ row.count_delta }}</span>{% endif %})
+						</span>
 				  </summary>
 				  <div class="details">
 					<table class="inner-table" style="table-layout: fixed; width: 100%;">

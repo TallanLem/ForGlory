@@ -20,7 +20,7 @@ param_options = [
 	"По уровню", "Сила", "Защита", "Ловкость", "Мастерство", "Живучесть",
 	"Награбил (серебро)", "Потерял (серебро)",
 	"Награбил (кристаллы)", "Потерял (кристаллы)",
-	"Братства по славе", "Кланы по славе", "Кланы по статам"
+	"Братства по славе", "Братства по статам", "Кланы по славе", "Кланы по статам"
 ]
 
 
@@ -49,6 +49,9 @@ def build_rating(data, param, previous_data=None):
 		return build_group_rating(data, "Братство", "Слава", previous_data)
 	elif param == "Кланы по статам":
 		return build_group_rating(data, "Клан", stat_keys, previous_data)
+	elif param == "Братства по статам":
+		return build_group_rating(data, "Братство", stat_keys, previous_data)
+
 	else:
 		rating = []
 		for pid, hero in data.items():

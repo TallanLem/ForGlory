@@ -1,5 +1,6 @@
-import logging, os, json, glob, re
+import logging, os, sys, json, glob, re
 
+from pprint import pprint
 from flask import Flask, render_template, request
 from datetime import datetime
 from operator import itemgetter
@@ -17,7 +18,7 @@ stat_keys = ["Сила", "Защита", "Ловкость", "Мастерств
 
 param_options = [
 	"Слава", "Побед", "Поражений", "Побед над Драконом", "Побед над Змеем",
-	"По уровню", "Сила", "Защита", "Ловкость", "Мастерство", "Живучесть",
+	"По уровню", "Сила", "Защита", "Ловкость", "Мастерство", "Живучесть", "Сумма статов",
 	"Награбил (серебро)", "Потерял (серебро)",
 	"Награбил (кристаллы)", "Потерял (кристаллы)",
 	"Братства по славе", "Братства по статам", "Кланы по славе", "Кланы по статам"
@@ -32,14 +33,28 @@ def extract_datetime_from_filename(filename):
 	return None
 
 
-def get_all_json_files():
-	files = glob.glob(os.path.join(data_folder, "heroes_*.json"))
-	return sorted(files, key=lambda f: extract_datetime_from_filename(f), reverse=True)
+def preload_recent_data(max_files=30):
+	data_cache = {}
 
+	files = sorted(
+		glob.glob(os.path.join(data_folder, "heroes_*.json")),
+		key=lambda f: extract_datetime_from_filename(f),
+		reverse=True
+	)[:max_files]
 
-def load_data(filepath):
-	with open(filepath, encoding="utf-8") as f:
-		return json.load(f)
+	for f in files:
+		try:
+			with open(f, encoding="utf-8") as fp:
+				data_cache[f] = json.load(fp)
+		except Exception as e:
+			logging.warning(f"Ошибка при загрузке {f}: {e}")
+
+	return data_cache, files
+
+preloaded_data, preloaded_files = preload_recent_data()
+#~ print(len(preloaded_data))
+#~ pprint(preloaded_data.keys())
+#~ sys.exit()
 
 
 def build_rating(data, param, previous_data=None):
@@ -51,27 +66,40 @@ def build_rating(data, param, previous_data=None):
 		return build_group_rating(data, "Клан", stat_keys, previous_data)
 	elif param == "Братства по статам":
 		return build_group_rating(data, "Братство", stat_keys, previous_data)
+	elif param == "Сумма статов":
+		param = stat_keys
 
-	else:
-		rating = []
-		for pid, hero in data.items():
-			if hero.get("Имя", "").lower():
+	rating = []
+	for pid, hero in data.items():
+		if hero.get("Имя", "").lower():
+			if isinstance(param, str):
 				value = hero.get(param, 0)
-				name = hero.get("Имя", "Безымянный")
-				level = hero.get("Уровень", "?")
-				delta = None
-				if previous_data and pid in previous_data:
+			elif isinstance(param, list):
+				value = sum(hero.get(p, 0) for p in param)
+			else:
+				value = 0
+
+			name = hero.get("Имя", "Безымянный")
+			level = hero.get("Уровень", "?")
+			delta = None
+			if previous_data and pid in previous_data:
+				if isinstance(param, str):
 					value_old = previous_data[pid].get(param, 0)
-					if value_old:
-						delta = value - value_old
-					else:
-						delta = 0
+				elif isinstance(param, list):
+					value_old = sum(previous_data[pid].get(p, 0) for p in param)
+				else:
+					value_old = 0
 
-				rating.append((pid, name, level, value, delta))
+				if value_old:
+					delta = value - value_old
+				else:
+					delta = 0
 
-		rating.sort(key=lambda x: x[3], reverse=1)
-		rating = rating[:1000]
-		return rating
+			rating.append((pid, name, level, value, delta))
+
+	rating.sort(key=lambda x: x[3], reverse=1)
+	rating = rating[:1000]
+	return rating
 
 
 def build_growth_rating(data1, data2, param):
@@ -80,22 +108,30 @@ def build_growth_rating(data1, data2, param):
 		hero1 = data1.get(pid, {})
 		name = hero2.get("Имя", "Безымянный")
 		level = hero2.get("Уровень", "?")
-		v2 = hero2.get(param, 0)
-		v1 = hero1.get(param, 0)
+		if isinstance(param, str):
+			v2 = hero2.get(param, 0)
+			v1 = hero1.get(param, 0)
+		elif isinstance(param, list):
+			v2 = sum(hero2.get(p, 0) for p in param)
+			v1 = sum(hero1.get(p, 0) for p in param)
+		else:
+			v2 = v1 = 0
+
 		diff = v2 - v1
 		extra = None
-		if param.startswith("Награбил"):
-			victories2 = hero2.get("Побед", 0)
-			victories1 = hero1.get("Побед", 0)
-			fights = victories2 - victories1
-			if fights > 0:
-				extra = round(diff / fights)
-		elif param.startswith("Потерял"):
-			defeats2 = hero2.get("Поражений", 0)
-			defeats1 = hero1.get("Поражений", 0)
-			fights = defeats2 - defeats1
-			if fights > 0:
-				extra = round(diff / fights)
+		if isinstance(param, str):
+			if param.startswith("Награбил"):
+				victories2 = hero2.get("Побед", 0)
+				victories1 = hero1.get("Побед", 0)
+				fights = victories2 - victories1
+				if fights > 0:
+					extra = round(diff / fights)
+			elif param.startswith("Потерял"):
+				defeats2 = hero2.get("Поражений", 0)
+				defeats1 = hero1.get("Поражений", 0)
+				fights = defeats2 - defeats1
+				if fights > 0:
+					extra = round(diff / fights)
 
 		rating.append((pid, name, level, diff, extra))
 	rating.sort(key=lambda x: x[3], reverse=1)
@@ -143,9 +179,6 @@ def get_level_ratings(data):
 	]
 
 def build_group_rating(data, group_key, param, previous_data=None):
-	from operator import itemgetter
-	import collections
-
 	id_key = "clan_id" if group_key == "Клан" else (
 		"brotherhood_id" if group_key == "Братство" else None)
 
@@ -222,11 +255,9 @@ def build_group_rating(data, group_key, param, previous_data=None):
 	return result
 
 
-
-
 @app.route("/", methods=["GET", "POST"])
 def index():
-	json_files = get_all_json_files()
+	json_files = preloaded_files
 	selected_param = "Слава"
 	selected_file = json_files[0] if json_files else None
 	file1 = file2 = None
@@ -264,11 +295,11 @@ def index():
 	if mode == "Общий":
 		selected_file = request.form.get("file", selected_file)
 
-		data = load_data(selected_file)
+		data = preloaded_data[selected_file]
 
 		file_index = json_files.index(selected_file)
 		if file_index + 1 < len(json_files):
-			prev_file = load_data(json_files[file_index + 1])
+			prev_file = preloaded_data[json_files[file_index + 1]]
 		else:
 			prev_file = None
 
@@ -299,15 +330,20 @@ def index():
 		elif len(json_files) == 1:
 			file1 = file2 = json_files[0]
 
-		if file1 and file2 and os.path.isfile(file1) and os.path.isfile(file2):
-			data1 = load_data(file1)
-			data2 = load_data(file2)
+		if file1 and file2 and file1 in preloaded_data and file2 in preloaded_data:
+			data1 = preloaded_data[file1]
+			data2 = preloaded_data[file2]
 
 			if selected_level and selected_level != "Все":
 				selected_level = int(selected_level)
 				data2 = {pid: h for pid, h in data2.items() if h.get("Уровень") == selected_level}
 
-			rating = build_growth_rating(data1, data2, selected_param)
+			if selected_param == "Сумма статов":
+				param = stat_keys
+			else:
+				param = selected_param
+
+			rating = build_growth_rating(data1, data2, param)
 			dt1 = extract_datetime_from_filename(file1)
 			dt2 = extract_datetime_from_filename(file2)
 			if dt1 and dt2:
@@ -316,7 +352,7 @@ def index():
 	else:
 		selected_param = request.args.get("param", param_options[0])
 
-	all_levels = sorted({hero.get("Уровень") for d in [load_data(selected_file)] if d for hero in d.values() if isinstance(hero.get("Уровень"), int)}, reverse=True)
+	all_levels = sorted({hero.get("Уровень") for d in [preloaded_data[selected_file]] if d for hero in d.values() if isinstance(hero.get("Уровень"), int)}, reverse=True)
 
 	param_selectable = [
 			p for p in param_options

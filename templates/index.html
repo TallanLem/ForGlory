@@ -85,17 +85,19 @@
 		  <datalist id="nicknames"></datalist>
 		  <button type="button" onclick="searchByNickname()" style="font-size: 16px;">🔍</button>
 
-		  <label for="level-select" style="white-space: nowrap;">Уровень:</label>
-		  <select name="level" id="level-select" onchange="this.form.submit()"
-			style="padding: 4px 6px;"
-			{% if param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы") %}
-			  disabled
-			{% endif %}>
-			<option value="Все" {% if selected_level == "Все" or not selected_level %}selected{% endif %}>Все</option>
-			{% for lvl in all_levels %}
-			  <option value="{{ lvl }}" {% if selected_level|int == lvl %}selected{% endif %}>{{ lvl }}</option>
-			{% endfor %}
-		  </select>
+			<div style="width: 100%;">
+			  <label for="level-select" style="white-space: nowrap;">Уровень:</label>
+			  <select name="level" id="level-select" onchange="this.form.submit()"
+				style="padding: 4px 6px;"
+				{% if param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы") %}
+				  disabled
+				{% endif %}>
+				<option value="Все" {% if selected_level == "Все" or not selected_level %}selected{% endif %}>Все</option>
+				{% for lvl in all_levels %}
+				  <option value="{{ lvl }}" {% if selected_level|int == lvl %}selected{% endif %}>{{ lvl }}</option>
+				{% endfor %}
+			  </select>
+			</div>
 		</div>
 	  
 	</form>

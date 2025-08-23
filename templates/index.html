@@ -147,7 +147,7 @@ function handleEnterKey(event) {
       {% set blocks = best_by_param | selectattr('param', 'equalto', param) | list %}
       {% set block = blocks[0] if blocks|length > 0 else None %}
       {% if block and block.rating and block.rating|length > 0 %}
-        <table class="inner-table" style="table-layout: fixed; width: 100%;">
+        <table style="table-layout: fixed; width: 100%;">
           <thead>
             <tr>
               <th style="width:40px;">№</th>
@@ -160,7 +160,7 @@ function handleEnterKey(event) {
               <tr data-nickname="{{ row[1]|lower }}">
                 <td style="width:40px; text-align:center;">{% if loop.index == 1 %}🥇{% elif loop.index == 2 %}🥈{% elif loop.index == 3 %}🥉{% else %}{{ loop.index }}{% endif %}</td>
                 <td style="text-align:left;">
-                  <a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank" style="display:inline-flex; width:100%; overflow:hidden;">
+                  <a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank" style="display:inline-flex; width:100%; overflow:hidden; min-width:0;">
                     <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:inline-block; max-width:100%;">{{ row[1] }}</span>
                     <span style="white-space:nowrap; flex-shrink:0; margin-left:4px;">[{{ row[2] }}]</span>
                   </a>

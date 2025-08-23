@@ -126,9 +126,6 @@ function handleEnterKey(event) {
 			  <label for="level-select" style="white-space: nowrap;">Уровень:</label>
 			  <select name="level" id="level-select" onchange="this.form.submit()"
 					  style="padding: 4px 6px;"
-					  {% if param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы") %}
-						disabled
-					  {% endif %}>
 				<option value="Все" {% if selected_level == "Все" or not selected_level %}selected{% endif %}>Все</option>
 				{% for lvl in all_levels %}
 				  <option value="{{ lvl }}" {% if selected_level|int == lvl %}selected{% endif %}>{{ lvl }}</option>
@@ -212,22 +209,26 @@ function handleEnterKey(event) {
 				  )
 				</summary>
               <div class="details">
-                <table class="inner-table" style="table-layout: fixed; width: 100%;">
+                <table class="inner-table" style="table-layout: auto; width: 100%;">
                   <thead>
-  <tr>
-    <th style="text-align:center;">№</th>
-    <th class="wide-name" style="text-align:left; width: 40%;">Ник</th>
-    <th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/strength.png') }}" alt="strength" class="icon"></th>
-    <th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/defense.png') }}" alt="defense" class="icon"></th>
-    <th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/dexterity.png') }}" alt="dexterity" class="icon"></th>
-    <th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/mastery.png') }}" alt="mastery" class="icon"></th>
-    <th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/vitality.png') }}" alt="vitality" class="icon"></th>
-  </tr>
-</thead>
+					  <tr>
+						<th style="text-align:center;">№</th>
+						<th class="wide-name" style="text-align:left; width: 40%;">Ник</th>
+						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/strength.png') }}" alt="strength" class="icon"></th>
+						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/defense.png') }}" alt="defense" class="icon"></th>
+						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/dexterity.png') }}" alt="dexterity" class="icon"></th>
+						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/mastery.png') }}" alt="mastery" class="icon"></th>
+						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/vitality.png') }}" alt="vitality" class="icon"></th>
+					  </tr>
+					</thead>
                   <tbody>
                     {% for player in group.players %}
                     <tr data-nickname="{{ player.name|lower|e }}">
-                      <td style="text-align:center;">{{ loop.index }}</td>
+						<td style="text-align:center; white-space:nowrap;">
+						  <span style="display:inline-block; min-width:1.5ch; padding:0 4px; box-sizing:border-box;">
+							{% if loop.index == 1 %}🥇{% elif loop.index == 2 %}🥈{% elif loop.index == 3 %}🥉{% else %}{{ loop.index }}{% endif %}
+						  </span>
+						</td>
                       <td class="wide-name shorten" style="text-align: left; padding-right: 6px;">
                         <a href="https://playwekings.mobi/hero/detail?player={{ player.ID }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
                           <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block;">

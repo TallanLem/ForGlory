@@ -356,7 +356,7 @@ def index():
 	best_by_param = []
 	filename_display = ""
 	diff_hours = None
-	selected_level = request.form.get("level")
+	selected_level = request.form.get("level", "Все")
 	files_display = [(f, extract_datetime_from_filename(f).strftime("%d.%m.%Y %H:%M")) for f in json_files]
 
 	mode = request.form.get("mode") or "Общий"
@@ -512,4 +512,4 @@ def index():
 
 
 if __name__ == "__main__":
-	app.run(debug=True)
+	app.run(debug=True, use_reloader=False, threaded=True)

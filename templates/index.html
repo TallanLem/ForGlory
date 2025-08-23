@@ -122,16 +122,24 @@ function handleEnterKey(event) {
 				  <button type="button" onclick="searchByNickname()" style="font-size: 16px;">🔍</button>
 			  </div>
 		
-			<div class="controls-row row-inline" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-			  <label for="level-select" style="white-space: nowrap;">Уровень:</label>
-			  <select name="level" id="level-select" onchange="this.form.submit()"
-					  style="padding: 4px 6px;"
-				<option value="Все" {% if selected_level == "Все" or not selected_level %}selected{% endif %}>Все</option>
-				{% for lvl in all_levels %}
-				  <option value="{{ lvl }}" {% if selected_level|int == lvl %}selected{% endif %}>{{ lvl }}</option>
-				{% endfor %}
-			  </select>
-			</div>
+				<div class="controls-row row-inline" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+				  <label for="level-select" style="white-space: nowrap;">Уровень:</label>
+				  <select name="level" id="level-select" onchange="this.form.submit()" style="padding: 4px 6px;">
+					<option value="Все"
+					  {% if selected_level is not defined
+							or selected_level is none
+							or selected_level == ''
+							or selected_level == 'Все' %}selected{% endif %}>
+					  Все
+					</option>
+					{% for lvl in all_levels %}
+					  <option value="{{ lvl }}"
+						{% if selected_level is defined and (selected_level|string) == (lvl|string) %}selected{% endif %}>
+						{{ lvl }}
+					  </option>
+					{% endfor %}
+				  </select>
+				</div>
 		{% endif %}
 
     </form>

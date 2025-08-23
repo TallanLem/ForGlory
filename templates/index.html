@@ -113,28 +113,29 @@ function handleEnterKey(event) {
           {% endfor %}
         </select>
       </div>
-
-		 <div class="filter-row" style="display:flex; align-items:center; gap:10px; flex-wrap:nowrap; margin-bottom:10px; width:100%;">
-			<input type="text" id="scroll-nick" list="nicknames" placeholder="Поиск по нику"
-					style="flex:1 1 auto; min-width:0; padding:6px 8px; border:1px solid #ccc; border-radius:4px;"
-					onkeydown="handleEnterKey(event)">
-			<datalist id="nicknames"></datalist>
-			  <button type="button" onclick="searchByNickname()" style="font-size: 16px;">🔍</button>
-		  </div>
-	  
-		<div class="controls-row row-inline" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-		  <label for="level-select" style="white-space: nowrap;">Уровень:</label>
-		  <select name="level" id="level-select" onchange="this.form.submit()"
-				  style="padding: 4px 6px;"
-				  {% if param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы") %}
-					disabled
-				  {% endif %}>
-			<option value="Все" {% if selected_level == "Все" or not selected_level %}selected{% endif %}>Все</option>
-			{% for lvl in all_levels %}
-			  <option value="{{ lvl }}" {% if selected_level|int == lvl %}selected{% endif %}>{{ lvl }}</option>
-			{% endfor %}
-		  </select>
-		</div>	  
+		{% if not (param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы")) %}
+			 <div class="filter-row" style="display:flex; align-items:center; gap:10px; flex-wrap:nowrap; margin-bottom:10px; width:100%;">
+				<input type="text" id="scroll-nick" list="nicknames" placeholder="Поиск по нику"
+						style="flex:1 1 auto; min-width:0; padding:6px 8px; border:1px solid #ccc; border-radius:4px;"
+						onkeydown="handleEnterKey(event)">
+				<datalist id="nicknames"></datalist>
+				  <button type="button" onclick="searchByNickname()" style="font-size: 16px;">🔍</button>
+			  </div>
+		
+			<div class="controls-row row-inline" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+			  <label for="level-select" style="white-space: nowrap;">Уровень:</label>
+			  <select name="level" id="level-select" onchange="this.form.submit()"
+					  style="padding: 4px 6px;"
+					  {% if param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы") %}
+						disabled
+					  {% endif %}>
+				<option value="Все" {% if selected_level == "Все" or not selected_level %}selected{% endif %}>Все</option>
+				{% for lvl in all_levels %}
+				  <option value="{{ lvl }}" {% if selected_level|int == lvl %}selected{% endif %}>{{ lvl }}</option>
+				{% endfor %}
+			  </select>
+			</div>
+		{% endif %}
 
     </form>
 
@@ -225,7 +226,7 @@ function handleEnterKey(event) {
 </thead>
                   <tbody>
                     {% for player in group.players %}
-                    <tr>
+                    <tr data-nickname="{{ player.name|lower|e }}">
                       <td style="text-align:center;">{{ loop.index }}</td>
                       <td class="wide-name shorten" style="text-align: left; padding-right: 6px;">
                         <a href="https://playwekings.mobi/hero/detail?player={{ player.ID }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
@@ -252,7 +253,7 @@ function handleEnterKey(event) {
     {% endif %}
 
     {% if mode != 'Лучшие (приросты)' %}
-      <table style="width: 100%; table-layout: fixed;">
+      <table style="width: 100%; table-layout: auto;">
         <thead>
           {% if param != "По уровню" %}
           <tr>
@@ -266,7 +267,7 @@ function handleEnterKey(event) {
           {% if param.startswith('Кланы') or param.startswith('Братства') %}
             {% for idx, row in enumerate(rating, 1) %}
               <tr>
-                <td style="width:40px; text-align:center;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
+                <td style="text-align:center; padding:0 6px; white-space:nowrap;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
                 <td>
                   <details>
                     <summary style="display: inline-flex; width: 100%; overflow: hidden;">
@@ -278,39 +279,65 @@ function handleEnterKey(event) {
                       </span>
                     </summary>
                     <div class="details">
-                      <table class="inner-table" style="table-layout: fixed; width: 100%;">
-                        {% for hero in row.members %}
-                          <tr>
-                            <td>{{ hero._rank }}.</td>
-                            <td>
-                              <a href="https://playwekings.mobi/hero/detail?player={{ hero.ID }}" target="_blank">
-                                <span>
-                                  {{ hero.name }} [{{ hero.level }}]</span>
-                              </a>
-                            </td>
-                            <td class="tight">
-							  {{ hero.score }}
-							  {% set hdelta = hero.get('delta') %}
+                      <table class="inner-table" style="table-layout: auto; width: 100%;">
+						  <colgroup>
+							<col style="width:auto;">
+							<col style="width:52%;">
+							<col style="width:auto;">
+						  </colgroup>
+						{% for hero in row.members %}
+						  {% set hname  = hero.get('Имя') or hero.get('name') %}
+						  {% set hid    = hero.get('ID')  or hero.get('id')  or hero.get('pid') %}
+						  {% set hlevel = hero.get('Уровень') or hero.get('level') %}
+						  {% set hscore = hero.get('value') %}
+						  {% set hrank  = hero.get('_rank', loop.index) %}
+						  {% set hdelta = hero.get('delta') %}
+
+						  <tr data-nickname="{{ (hname or '')|lower|e }}">
+							<td>{{ hrank }}</td>
+								<td style="width: clamp(300px, 68%, 760px);">
+								  <a href="https://playwekings.mobi/hero/detail?player={{ hid }}" target="_blank"
+									 style="display:inline-flex; width:100%; overflow:hidden; min-width:0; align-items:baseline;">
+									<span style="flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
+									  {{ hname }}
+									</span>
+									<span style="flex:0 0 auto; white-space:nowrap; margin-left:6px;">
+									  [{{ hlevel if hlevel is not none else '?' }}]
+									</span>
+								  </a>
+								</td>
+							<td class="tight" style="text-align:center;">
+							  {{ hscore }}
 							  {% if hdelta is not none and hdelta != 0 %}
 								<span style="color: {{ 'green' if hdelta > 0 else 'red' }}; margin-left: 6px;">
 								  ({% if hdelta > 0 %}+{{ hdelta }}{% elif hdelta < 0 %}{{ hdelta }}{% endif %})
 								</span>
 							  {% endif %}
 							</td>
-                          </tr>
-                        {% endfor %}
+						  </tr>
+						{% endfor %}
                       </table>
                     </div>
                   </details>
                 </td>
-				<td class="tight" style="text-align: left;">
-				  {{ row.score }}
+				<td class="tight" style="text-align:center;">
 				  {% set rdelta = row.get('delta') %}
-				  {% if rdelta is not none and rdelta != 0 %}
-					<span style="color: {{ 'green' if rdelta > 0 else 'red' }}; margin-left: 6px;">
-					  ({% if rdelta > 0 %}+{{ rdelta }}{% elif rdelta < 0 %}{{ rdelta }}{% endif %})
-					</span>
-				  {% endif %}
+				  <span class="total-inline">
+					{{ row.score }}
+					{% if rdelta is not none and rdelta != 0 %}
+					  <span style="color: {{ 'green' if rdelta > 0 else 'red' }}; margin-left: 6px;">
+						({% if rdelta > 0 %}+{{ rdelta }}{% elif rdelta < 0 %}{{ rdelta }}{% endif %})
+					  </span>
+					{% endif %}
+				  </span>
+				  <span class="total-stacked" style="display:none;">
+					<div>{{ row.score }}</div>
+					{% if rdelta is not none and rdelta != 0 %}
+					  <div style="color: {{ 'green' if rdelta > 0 else 'red' }};">
+						({% if rdelta > 0 %}+{{ rdelta }}{% elif rdelta < 0 %}{{ rdelta }}{% endif %})
+					  </div>
+					{% endif %}
+				  </span>
 				</td>
               </tr>
             {% endfor %}
@@ -321,7 +348,7 @@ function handleEnterKey(event) {
 				{% set level = row[2] %}
 				{% set value = row[3] %}
 		
-              <tr {% if highlighted %}style="background: rgba(255,215,0,0.2);"{% endif %}>
+              <tr data-nickname="{{ name|lower|e }}" {% if highlighted %}style="background: rgba(255,215,0,0.2);"{% endif %}>
                 <td style="width:40px; text-align:center;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
                 <td class="wide-name">
                   <a href="https://playwekings.mobi/hero/detail?player={{ ID }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
@@ -421,6 +448,24 @@ function handleEnterKey(event) {
 		  }
 		});
 	  });
+	  
+	  // Переключаем вид общей суммы/прироста при раскрытии/сворачивании details
+		document.querySelectorAll('td > details').forEach((d) => {
+		  const tr = d.closest('tr');
+		  if (!tr) return;
+		  const totalInline = tr.querySelector('.total-inline');
+		  const totalStacked = tr.querySelector('.total-stacked');
+		  if (!totalInline || !totalStacked) return;
+
+		  const sync = () => {
+			const open = d.open;
+			totalInline.style.display = open ? 'none' : 'inline-block';
+			totalStacked.style.display = open ? 'inline-block' : 'none';
+		  };
+		  d.addEventListener('toggle', sync);
+		  // первичная синхронизация (на случай, если какие-то details открыты по умолчанию)
+		  sync();
+		});
 	</script>
 
 </body>

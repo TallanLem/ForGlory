@@ -176,46 +176,51 @@ def get_level_ratings(data):
 		for level in sorted_levels
 	]
 
+
 def build_group_rating(data, group_key, param, previous_data=None):
 	id_key = "clan_id" if group_key == "Клан" else (
-		"brotherhood_id" if group_key == "Братство" else None)
+		"brotherhood_id" if group_key == "Братство" else None
+	)
 
 	def is_id_mode(dataset):
 		return any(id_key in h for h in dataset.values())
 
 	use_id_mode = is_id_mode(data)
 
+	def get_value(hero):
+		if isinstance(param, str):
+			return hero.get(param, 0)
+		elif isinstance(param, list):
+			return sum(hero.get(p, 0) for p in param)
+		return 0
+
 	def build_groups(dataset, id_mode):
 		groups = {}
 		for hero in dataset.values():
+			# 1) определить ключ группы
 			if id_mode:
 				group_id = hero.get(id_key, 0)
-				group_name = hero.get(group_key, "").strip()
-				if group_id and group_name:
-					key = group_id
-					if key not in groups:
-						groups[key] = {"name": group_name, "score": 0, "members": []}
-				else:
+				group_name = (hero.get(group_key, "") or "").strip()
+				if not (group_id and group_name):
 					continue
+				key = group_id
+				if key not in groups:
+					groups[key] = {"name": group_name, "score": 0, "members": []}
 			else:
-				group_name = hero.get(group_key, "").strip()
+				group_name = (hero.get(group_key, "") or "").strip()
 				if not group_name or "не состоит" in group_name.lower():
 					continue
 				key = group_name
 				if key not in groups:
 					groups[key] = {"name": group_name, "score": 0, "members": []}
 
-			if isinstance(param, str):
-				value = hero.get(param, 0)
-			elif isinstance(param, list):
-				value = sum(hero.get(p, 0) for p in param)
-			else:
-				value = 0
-
-			hero["value"] = value
+			# 2) текущее значение параметра
+			value = get_value(hero)
+			hero["value"] = value  # (как и раньше, не создаём копии)
 			groups[key]["score"] += value
 			groups[key]["members"].append(hero)
 
+		# 3) сортировка участников и ранги
 		for g in groups.values():
 			g["members"].sort(key=lambda h: h["value"], reverse=True)
 			for i, h in enumerate(g["members"], 1):
@@ -226,8 +231,18 @@ def build_group_rating(data, group_key, param, previous_data=None):
 	current = build_groups(data, use_id_mode)
 	previous = build_groups(previous_data, use_id_mode) if previous_data else {}
 
-	all_keys = set(current) | set(previous)
+	# --- карта предыдущих значений по pid, чтобы посчитать дельты участников ---
+	prev_value_by_pid = {}
+	if previous:
+		for g in previous.values():
+			for h in g.get("members", []):
+				pid = h.get("ID") or h.get("id") or h.get("pid")
+				if pid is not None:
+					# в previous уже посчитан h["value"] тем же get_value
+					prev_value_by_pid[pid] = h.get("value", 0)
 
+	# --- собрать итог по группам + проставить delta каждому участнику ---
+	all_keys = set(current) | set(previous)
 	result = []
 	for key in all_keys:
 		curr_group = current.get(key, {})
@@ -236,7 +251,16 @@ def build_group_rating(data, group_key, param, previous_data=None):
 		name = curr_group.get("name") or prev_group.get("name") or str(key)
 		score_now = curr_group.get("score", 0)
 		score_prev = prev_group.get("score", 0)
+
 		members_now = curr_group.get("members", [])
+		# персональные дельты участников (None, если нет прошлого снэпшота или герой не найден)
+		for h in members_now:
+			pid = h.get("ID") or h.get("id") or h.get("pid")
+			if pid is not None and pid in prev_value_by_pid:
+				h["delta"] = h.get("value", 0) - prev_value_by_pid[pid]
+			else:
+				h["delta"] = None
+
 		count_now = len(members_now)
 		count_prev = len(prev_group.get("members", []))
 
@@ -246,11 +270,12 @@ def build_group_rating(data, group_key, param, previous_data=None):
 			"delta": score_now - score_prev,
 			"count": count_now,
 			"count_delta": count_now - count_prev,
-			"members": members_now
+			"members": members_now,
 		})
 
 	result.sort(key=itemgetter("score"), reverse=True)
 	return result
+
 
 def _collect_all_levels(preloaded_data):
 	levels = set()
@@ -488,5 +513,5 @@ def index():
 
 
 if __name__ == "__main__":
-	#~ app.run()
-	app.run(debug=True)
+	app.run()
+	#~ app.run(debug=True)

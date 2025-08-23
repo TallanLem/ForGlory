@@ -381,7 +381,7 @@ def index():
 		column2_name = "Клан"
 		column3_name = "Сумма статов"
 	elif selected_param == "По уровню":
-		if mode == "Прирост":
+		if mode == "Прирост" or mode == "Лучшие (приросты)":
 			selected_param = 'Слава'
 
 	if mode == "Общий":

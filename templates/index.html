@@ -1,13 +1,37 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-	<script>
-		if (localStorage.getItem('theme') === 'dark') {
-			document.documentElement.classList.add('dark');
-		} else {
-			document.documentElement.classList.remove('dark');
-		}
-	</script>
+  <script>
+function searchByNickname() {
+  const input = document.getElementById("scroll-nick");
+  const query = input ? input.value.trim().toLowerCase() : "";
+  if (!query) return;
+  const rows = document.querySelectorAll('tr[data-nickname]');
+  let found = false;
+  for (const row of rows) {
+    if (row.dataset.nickname === query) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      row.style.outline = '2px solid gold';
+      setTimeout(() => row.style.outline = '', 3000);
+      found = true;
+      break;
+    }
+  }
+  if (!found) alert("Игрок не найден.");
+}
+function handleEnterKey(event) {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    searchByNickname();
+  }
+}
+
+    if (localStorage.getItem('theme') === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  </script>
 
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta charset="UTF-8">
@@ -17,344 +41,386 @@
 </head>
 <body>
   <div class="container">
-	<form method="POST" class="form-container">
-		<div class="mode-toggle">
-		  <input type="radio" id="tab1" name="mode" value="Общий"
-				 onchange="this.form.submit()" {{ 'checked' if mode == 'Общий' else '' }}>
-		  <label for="tab1">Общий</label>
+    <form method="POST" class="form-container">
+      <div class="mode-toggle">
+        <input type="radio" id="tab1" name="mode" value="Общий"
+               onchange="this.form.submit()" {{ 'checked' if mode == 'Общий' else '' }}>
+        <label for="tab1">Общий</label>
 
-		  <input type="radio" id="tab2" name="mode" value="Прирост"
-				 onchange="this.form.submit()" {{ 'checked' if mode == 'Прирост' else '' }}>
-		  <label for="tab2">Прирост</label>
-		</div>
+        <input type="radio" id="tab2" name="mode" value="Прирост"
+               onchange="this.form.submit()" {{ 'checked' if mode == 'Прирост' else '' }}>
+        <label for="tab2">Прирост</label>
 
-	  <div class="date-select">
-		{% if mode == 'Прирост' %}
-		  <div class="row-inline">	
-			  <label>от</label>
-			  <select name="file1" onchange="this.form.submit()">
-				{% for f in json_files %}
-				  <option value="{{ f }}" {% if f == file1 %}selected{% endif %}>{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}</option>
-				{% endfor %}
-			  </select>
-			  <label>до</label>
-			  <select name="file2" onchange="this.form.submit()">
-				{% for f in json_files %}
-				  <option value="{{ f }}" {% if f == file2 %}selected{% endif %}>{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}</option>
-				{% endfor %}
-			  </select>
-			</div>
-		{% else %}
-		  <select name="file" onchange="this.form.submit()">
-			{% for f in json_files %}
-			  <option value="{{ f }}" {% if f == selected_file %}selected{% endif %}>{{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}</option>
+        <input type="radio" id="tab3" name="mode" value="Лучшие (приросты)"
+               onchange="this.form.submit()" {{ 'checked' if mode == 'Лучшие (приросты)' else '' }}>
+        <label for="tab3" class="tab-two-line"
+			   style="display:inline-flex;flex-direction:column;align-items:center;line-height:1.1;">
+		  <span class="tab-main">Лучшие</span>
+		  <span class="tab-sub" style="font-size:12px;opacity:.85;margin-top:-2px;display:block;">приросты</span>
+		</label>
+      </div>
+
+      <div class="date-select">
+        {% if mode == 'Прирост' %}
+          <div class="row-inline">
+            <label>от</label>
+            <select name="file1" onchange="this.form.submit()">
+              {% for f in json_files %}
+                <option value="{{ f }}" {% if f == file1 %}selected{% endif %}>
+                  {{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
+                </option>
+              {% endfor %}
+            </select>
+            <label>до</label>
+            <select name="file2" onchange="this.form.submit()">
+              {% for f in json_files %}
+                <option value="{{ f }}" {% if f == file2 %}selected{% endif %}>
+                  {{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+        {% elif mode == 'Лучшие (приросты)' %}
+          <!-- Выбор дат скрыт -->
+        {% else %}
+          <select name="file" onchange="this.form.submit()">
+            {% for f in json_files %}
+              <option value="{{ f }}" {% if f == selected_file %}selected{% endif %}>
+                {{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
+              </option>
+            {% endfor %}
+          </select>
+        {% endif %}
+      </div>
+
+      {% if mode != 'Лучшие (приросты)' %}
+        {% if diff_hours %}
+          <div style="font-size: 0.9em; color: #888; margin-top: -5px; margin-bottom: 6px;">
+            ({% if mode == 'Общий' %}+{% endif %}прирост за {{ diff_hours }}
+            {{
+              ' час' if diff_hours % 10 == 1 and diff_hours % 100 != 11 else
+              ' часа' if diff_hours % 10 in [2,3,4] and diff_hours % 100 not in [12,13,14] else
+              ' часов'
+            }})
+          </div>
+        {% endif %}
+      {% endif %}
+
+      <div class="controls-row row-inline">
+        <select name="param" onchange="this.form.submit()">
+          {% for p in param_selectable %}
+            <option value="{{ p }}" {% if p == param %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+		 <div class="filter-row" style="display:flex; align-items:center; gap:10px; flex-wrap:nowrap; margin-bottom:10px; width:100%;">
+			<input type="text" id="scroll-nick" list="nicknames" placeholder="Поиск по нику"
+					style="flex:1 1 auto; min-width:0; padding:6px 8px; border:1px solid #ccc; border-radius:4px;"
+					onkeydown="handleEnterKey(event)">
+			<datalist id="nicknames"></datalist>
+			  <button type="button" onclick="searchByNickname()" style="font-size: 16px;">🔍</button>
+		  </div>
+	  
+		<div class="controls-row row-inline" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+		  <label for="level-select" style="white-space: nowrap;">Уровень:</label>
+		  <select name="level" id="level-select" onchange="this.form.submit()"
+				  style="padding: 4px 6px;"
+				  {% if param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы") %}
+					disabled
+				  {% endif %}>
+			<option value="Все" {% if selected_level == "Все" or not selected_level %}selected{% endif %}>Все</option>
+			{% for lvl in all_levels %}
+			  <option value="{{ lvl }}" {% if selected_level|int == lvl %}selected{% endif %}>{{ lvl }}</option>
 			{% endfor %}
 		  </select>
-		{% endif %}
-	  </div>
-	  
-		{% if diff_hours %}
-		  <div style="font-size: 0.9em; color: #888; margin-top: -5px; margin-bottom: 6px;">
-			({% if mode == 'Общий' %}+{% endif %}прирост за {{ diff_hours }}
-			{{
-			  ' час' if diff_hours % 10 == 1 and diff_hours % 100 != 11 else
-			  ' часа' if diff_hours % 10 in [2,3,4] and diff_hours % 100 not in [12,13,14] else
-			  ' часов'
-			}})
-		  </div>
-		{% endif %}
+		</div>	  
 
-	  <div class="controls-row row-inline">
-		<select name="param" onchange="this.form.submit()">
-		  {% for p in param_selectable %}
-			<option value="{{ p }}" {% if p == param %}selected{% endif %}>{{ p }}</option>
-		  {% endfor %}
-		</select>
+    </form>
 
-	  </div>
+    <button id="theme-toggle" class="theme-toggle"
+            style="position: absolute; right: 0; top: 0; font-size: 24px;">
+      🌙
+    </button>
 
-	
-		<div class="filter-row" style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px;">
-		  <input type="text" id="scroll-nick" list="nicknames" placeholder="Поиск по нику"
-			style="flex: 1; min-width: 150px; padding: 4px 8px;"
-			{% if param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы") %}
-			  disabled
-			{% endif %}
-			onkeydown="handleEnterKey(event)">
-		  
-		  <datalist id="nicknames"></datalist>
-		  <button type="button" onclick="searchByNickname()" style="font-size: 16px;">🔍</button>
+    {% if mode == 'Лучшие (приросты)' %}
+      {% set blocks = best_by_param | selectattr('param', 'equalto', param) | list %}
+      {% set block = blocks[0] if blocks|length > 0 else None %}
+      {% if block and block.rating and block.rating|length > 0 %}
+        <table class="inner-table" style="table-layout: fixed; width: 100%;">
+          <thead>
+            <tr>
+              <th style="width:40px;">№</th>
+              <th style="text-align:left;">Игрок</th>
+              <th style="text-align:center;">{{ block.param }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in block.rating[:1000] %}
+              <tr data-nickname="{{ row[1]|lower }}">
+                <td style="width:40px; text-align:center;">{% if loop.index == 1 %}🥇{% elif loop.index == 2 %}🥈{% elif loop.index == 3 %}🥉{% else %}{{ loop.index }}{% endif %}</td>
+                <td style="text-align:left;">
+                  <a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank" style="display:inline-flex; width:100%; overflow:hidden;">
+                    <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:inline-block; max-width:100%;">{{ row[1] }}</span>
+                    <span style="white-space:nowrap; flex-shrink:0; margin-left:4px;">[{{ row[2] }}]</span>
+                  </a>
+                </td>
+                <td style="text-align:center;">{{ row[3] }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <div style="opacity:.7;">Нет данных для параметра «{{ param }}».</div>
+      {% endif %}
+    {% endif %}
 
-			<div style="width: 100%;">
-			  <label for="level-select" style="white-space: nowrap;">Уровень:</label>
-			  <select name="level" id="level-select" onchange="this.form.submit()"
-				style="padding: 4px 6px;"
-				{% if param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы") %}
-				  disabled
-				{% endif %}>
-				<option value="Все" {% if selected_level == "Все" or not selected_level %}selected{% endif %}>Все</option>
-				{% for lvl in all_levels %}
-				  <option value="{{ lvl }}" {% if selected_level|int == lvl %}selected{% endif %}>{{ lvl }}</option>
-				{% endfor %}
-			  </select>
-			</div>
-		</div>
-	  
-	</form>
-	
-	 <button id="theme-toggle" class="theme-toggle"
-          style="position: absolute; right: 0; top: 0; font-size: 24px;">
-    🌙
-     </button>
-
-{% if param == "По уровню" and mode == "Общий" %}
-	<tbody>
-		{% for group in level_ratings %}
-		<tr>
-			<td colspan="3">
-				<details>
-					<summary>Уровень {{ group.level }} ({{ group.players|length }} игроков)</summary>
-					<div class="details">
-						<table class="inner-table" style="table-layout: fixed; width: 100%;">
-							<thead>
-								<tr>
-									<th style="text-align: left; padding-right: 8px;">№</th>
-									<th class="wide-name" style="text-align: left; width: 40%;">Ник</th>
-									<th class="tight" style="text-align: left;"><img src="{{ url_for('static', filename='icons/strength.png') }}" alt="strength" class="icon"></th>
-									<th class="tight" style="text-align: left;"><img src="{{ url_for('static', filename='icons/defense.png') }}" alt="defense" class="icon"></th>
-									<th class="tight" style="text-align: left;"><img src="{{ url_for('static', filename='icons/dexterity.png') }}" alt="dexterity" class="icon"></th>
-									<th class="tight" style="text-align: left;"><img src="{{ url_for('static', filename='icons/mastery.png') }}" alt="mastery" class="icon"></th>
-									<th class="tight" style="text-align: left;"><img src="{{ url_for('static', filename='icons/vitality.png') }}" alt="vitality" class="icon"></th>
-								</tr>
-							</thead>
-							<tbody>
-								{% for player in group.players %}
-								<tr>
-									<td style="text-align: left;">{{ loop.index }}.</td>
-									<td class="wide-name shorten" style="text-align: left; padding-right: 6px;">
-										<a href="https://playwekings.mobi/hero/detail?player={{ player.ID }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
-											<span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block;">
-											{{ player.name }}
-											</span>
-										</a>
-									</td>
-									<td class="tight">{{ player.strength }}</td>
-									<td class="tight">{{ player.defense }}</td>
-									<td class="tight">{{ player.dexterity }}</td>
-									<td class="tight">{{ player.mastery }}</td>
-									<td class="tight">{{ player.vitality }}</td>
-								</tr>
-								{% endfor %}
-							</tbody>
-						</table>
-					</div>
-				</details>
-			</td>
-		</tr>
+    {% if param == "По уровню" and mode == "Общий" %}
+		{% set totals = namespace(count=0, delta=0) %}
+		{% for g in level_ratings %}
+		  {% set totals.count = totals.count + (g.players|length) %}
+		  {% if g.count_delta is defined and g.count_delta %}
+			{% set totals.delta = totals.delta + g.count_delta %}
+		  {% endif %}
 		{% endfor %}
-	</tbody>
-{% endif %}
-	<table style="width: 100%; table-layout: fixed;">
-	  <thead>
-		{% if param != "По уровню" %}
-			<tr>
-				<th style="padding-right: 15px;">№</th>
-				<th class="col2" style="text-align: left;">{{ column2_name }}</th>
-				<th class="col3" style="text-align: center;">{{ column3_name }}</th>
-			</tr>
-		{% endif %}
-	  </thead>
-	  <tbody>
-		{% if param.startswith('Кланы') or param.startswith('Братства') %}
-		  {% for idx, row in enumerate(rating, 1) %}
-			<tr>
-				<td>
-				  {% if idx == 1 %}
-					🥇
-				  {% elif idx == 2 %}
-					🥈
-				  {% elif idx == 3 %}
-					🥉
-				  {% else %}
-					{{ idx }}
-				  {% endif %}
-				</td>
-			  <td>
-				<details>
-				  <summary style="display: inline-flex; width: 100%; overflow: hidden;">
-					  <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; padding-right: 6px;">
-						{{ row.name }}
+
+		<div style="margin:8px 0 6px; font-weight:600;">
+		  Всего игроков {{ totals.count }}
+		  {% if totals.delta %}
+			(<span style="color: {{ 'green' if totals.delta > 0 else 'red' }};">
+			  {% if totals.delta > 0 %}+{{ totals.delta }}{% else %}{{ totals.delta }}{% endif %}
+			</span>)
+		  {% endif %}
+		</div>
+	
+      <tbody>
+        {% for group in level_ratings %}
+        <tr>
+          <td colspan="3">
+            <details>
+				<summary>
+				  Уровень {{ group.level }}
+				  (
+					{{ group.players|length }} игроков
+					{% set d = (group.count_delta if group.count_delta is defined else 0) %}
+					{% if d %}
+					  <span style="color: {{ 'green' if d > 0 else 'red' }};">
+						{% if d > 0 %}+{{ d }}{% else %}{{ d }}{% endif %}
 					  </span>
-						<span style="flex-shrink: 0;">
-						  ({{ row.members|length }}{% if row.count_delta is not none and row.count_delta != 0 %}<span style="color: {{ 'green' if row.count_delta > 0 else 'red' }};">{{ '+' if row.count_delta > 0 else '' }}{{ row.count_delta }}</span>{% endif %})
-						</span>
-				  </summary>
-				  <div class="details">
-					<table class="inner-table" style="table-layout: fixed; width: 100%;">
-						{% for hero in row.members %}
-							<tr>
-								<td>{{ hero._rank }}.</td>
-								<td>
-								  <a href="https://playwekings.mobi/hero/detail?player={{ hero.ID }}" target="_blank">
-									<span>
-									  {{ hero.Имя }}
-									</span>
-									<span style="">
-									  [{{ hero.Уровень }}]
-									</span>
-								  </a>
-								</td>
-								<td class="heroes" style="text-align: right;">{{ hero.value }}</td>
-							</tr>
-						{% endfor %}
-					</table>
-				  </div>
-				</details>
-			  </td>
-			  <td class="score-cell" style="text-align: center;">
+					{% endif %}
+				  )
+				</summary>
+              <div class="details">
+                <table class="inner-table" style="table-layout: fixed; width: 100%;">
+                  <thead>
+  <tr>
+    <th style="text-align:center;">№</th>
+    <th class="wide-name" style="text-align:left; width: 40%;">Ник</th>
+    <th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/strength.png') }}" alt="strength" class="icon"></th>
+    <th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/defense.png') }}" alt="defense" class="icon"></th>
+    <th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/dexterity.png') }}" alt="dexterity" class="icon"></th>
+    <th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/mastery.png') }}" alt="mastery" class="icon"></th>
+    <th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/vitality.png') }}" alt="vitality" class="icon"></th>
+  </tr>
+</thead>
+                  <tbody>
+                    {% for player in group.players %}
+                    <tr>
+                      <td style="text-align:center;">{{ loop.index }}</td>
+                      <td class="wide-name shorten" style="text-align: left; padding-right: 6px;">
+                        <a href="https://playwekings.mobi/hero/detail?player={{ player.ID }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
+                          <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block;">
+                          {{ player.name }}
+                          </span>
+                        </a>
+                      </td>
+                      <td class="tight" style="text-align:center;">{{ player.strength }}</td>
+                      <td class="tight" style="text-align:center;">{{ player.defense }}</td>
+                      <td class="tight" style="text-align:center;">{{ player.dexterity }}</td>
+                      <td class="tight" style="text-align:center;">{{ player.mastery }}</td>
+                      <td class="tight" style="text-align:center;">{{ player.vitality }}</td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    {% endif %}
+
+    {% if mode != 'Лучшие (приросты)' %}
+      <table style="width: 100%; table-layout: fixed;">
+        <thead>
+          {% if param != "По уровню" %}
+          <tr>
+            <th style="width:40px; text-align:center;">№</th>
+            <th>{{ column2_name }}</th>
+            <th class="tight">{{ column3_name }}</th>
+          </tr>
+          {% endif %}
+        </thead>
+        <tbody>
+          {% if param.startswith('Кланы') or param.startswith('Братства') %}
+            {% for idx, row in enumerate(rating, 1) %}
+              <tr>
+                <td style="width:40px; text-align:center;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
+                <td>
+                  <details>
+                    <summary style="display: inline-flex; width: 100%; overflow: hidden;">
+                      <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; padding-right: 6px;">
+                        {{ row.name }}
+                      </span>
+                      <span style="flex-shrink: 0;">
+                        ({{ row.members|length }}{% if row.count_delta and row.count_delta != 0 %} <span style="color: {{ 'green' if row.count_delta > 0 else 'red' }};">{% if row.count_delta > 0 %}+{{ row.count_delta }}{% else %}{{ row.count_delta }}{% endif %}</span>{% endif %})
+                      </span>
+                    </summary>
+                    <div class="details">
+                      <table class="inner-table" style="table-layout: fixed; width: 100%;">
+                        {% for hero in row.members %}
+                          <tr>
+                            <td>{{ hero._rank }}.</td>
+                            <td>
+                              <a href="https://playwekings.mobi/hero/detail?player={{ hero.ID }}" target="_blank">
+                                <span>
+                                  {{ hero.name }} [{{ hero.level }}]</span>
+                              </a>
+                            </td>
+                            <td class="tight">
+							  {{ hero.score }}
+							  {% set hdelta = hero.get('delta') %}
+							  {% if hdelta is not none and hdelta != 0 %}
+								<span style="color: {{ 'green' if hdelta > 0 else 'red' }}; margin-left: 6px;">
+								  ({% if hdelta > 0 %}+{{ hdelta }}{% elif hdelta < 0 %}{{ hdelta }}{% endif %})
+								</span>
+							  {% endif %}
+							</td>
+                          </tr>
+                        {% endfor %}
+                      </table>
+                    </div>
+                  </details>
+                </td>
+				<td class="tight" style="text-align: left;">
 				  {{ row.score }}
-				  {% if row.delta is not none and row.delta != 0 %}
-					<span style="color: {{ 'green' if row.delta > 0 else 'red' }};">
-					  ({{ '+' if row.delta > 0 else '' }}{{ row.delta }})
+				  {% set rdelta = row.get('delta') %}
+				  {% if rdelta is not none and rdelta != 0 %}
+					<span style="color: {{ 'green' if rdelta > 0 else 'red' }}; margin-left: 6px;">
+					  ({% if rdelta > 0 %}+{{ rdelta }}{% elif rdelta < 0 %}{{ rdelta }}{% endif %})
 					</span>
 				  {% endif %}
-			  </td>
-			</tr>
-		  {% endfor %}
-		{% else %}
-		  {% for idx, row in enumerate(rating, 1) %}
-			{% set pid = row[0] %}
-			{% set name = row[1] %}
-			{% set level = row[2] %}
-			{% set value = row[3] %}
-			{% if mode == "Общий" %}
-			  {% set delta = row[4] if row|length > 4 else none %}
-			  {% set extra = none %}
-			{% else %}
-			  {% set delta = none %}
-			  {% set extra = row[4] if row|length > 4 else none %}
-			{% endif %}
-			<tr data-nickname="{{ name|lower }}">
-			    <td>
-				  {% if idx == 1 %}
-					🥇
-				  {% elif idx == 2 %}
-					🥈
-				  {% elif idx == 3 %}
-					🥉
-				  {% else %}
-					{{ idx }}.
+				</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            {% for idx, row in enumerate(rating, 1) %}
+				{% set ID = row[0] %}
+				{% set name = row[1] %}
+				{% set level = row[2] %}
+				{% set value = row[3] %}
+		
+              <tr {% if highlighted %}style="background: rgba(255,215,0,0.2);"{% endif %}>
+                <td style="width:40px; text-align:center;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
+                <td class="wide-name">
+                  <a href="https://playwekings.mobi/hero/detail?player={{ ID }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
+                    <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 100%;">{{ name }}</span>
+                    <span style="white-space: nowrap; flex-shrink: 0; margin-left: 4px;">[{{ level }}]</span>
+                  </a>
+                </td>
+				<td style="text-align: center;">
+				  {{ value }}
+				  {% if mode == "Общий" and row[4] is not none and row[4] != 0 %}
+					<span style="color: {{ 'green' if row[4] > 0 else 'red' }};">({{ '+' if row[4] > 0 else '-' }}{{ row[4] }})</span>
+				  {% endif %}
+				  {% if mode != "Общий" and row[4] is not none %}
+					<span style="color: #888;">({{ row[4] }} за бой)</span>
 				  {% endif %}
 				</td>
-			  <td style="text-align: left; left; width: 40%;">
-				<a href="https://playwekings.mobi/hero/detail?player={{ pid }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
-				<span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 100%;">
-				{{ name }}
-				</span>
-				<span style="white-space: nowrap; flex-shrink: 0; margin-left: 4px;">
-				[{{ level }}]
-				</span>
-				</a>
-			  </td>
-			    <td style="text-align: center;">
-				  {% if mode == "Общий" %}
-					{{ value }}
-					{% if delta is not none and delta != 0 %}
-					  <span style="color: {{ 'green' if delta > 0 else 'red' }};">
-						({{ '+' if delta > 0 else '-' }}{{ delta }})
-					  </span>
-					{% endif %}
-				  {% else %}
-					{{ value }}
-					{% if extra is not none %}
-					  <span style="color: #888;">({{ extra }} за бой)</span>
-					{% endif %}
-				  {% endif %}
-				</td>
-			</tr>
-		  {% endfor %}
-		{% endif %}
-	  </tbody>
-	</table>
+              </tr>
+            {% endfor %}
+          {% endif %}
+        </tbody>
+      </table>
+    {% endif %}
   </div>
 
-	<script>
-		document.addEventListener("DOMContentLoaded", () => {
-			const toggleButton = document.getElementById("theme-toggle");
-			const root = document.documentElement;
-			const isDark = () => root.classList.contains("dark");
-			const savedTheme = localStorage.getItem("theme");
-			if (savedTheme === "dark") {root.classList.add("dark");}
-			toggleButton.textContent = isDark() ? "☀️" : "🌙";
+  <script>
+	  // Сбор никнеймов безопасно (без вложенных if/else внутри JS-массива)
+	  {% set names_list = [] %}
+	  {% if mode == 'Лучшие (приросты)' %}
+		{% set blocks = best_by_param | selectattr('param','equalto',param) | list %}
+		{% if blocks|length > 0 %}
+		  {% set names_list = (blocks[0].rating[:1000] | map(attribute=1) | list) %}
+		{% endif %}
+	  {% else %}
+		{% set ns = namespace(names=[]) %}
+		{% for row in rating %}
+		  {# Словарь (кланы/братства и т.п.) #}
+		  {% if row is mapping %}
+			{% set rname = row.get('name') %}
+			{% if rname is not none %}
+			  {% set ns.names = ns.names + [rname] %}
+			{% endif %}
+			{% if row.get('members') %}
+			  {% for hero in row.get('members') %}
+				{% if hero is mapping and hero.get('name') is not none %}
+				  {% set ns.names = ns.names + [hero.get('name')] %}
+				{% endif %}
+			  {% endfor %}
+			{% endif %}
+		  {# Кортеж/список (pid, name, ...) #}
+		  {% elif row is sequence and row|length > 1 %}
+			{% set ns.names = ns.names + [row[1]] %}
+		  {% endif %}
+		{% endfor %}
+		{% set names_list = ns.names %}
+	  {% endif %}
+	  const allNicknames = {{ names_list | tojson }};
 
-			toggleButton.addEventListener("click", () => {
-				root.classList.toggle("dark");
-				const next = isDark() ? "dark" : "light";
-				localStorage.setItem("theme", next);
-				toggleButton.textContent = isDark() ? "☀️" : "🌙";
-			});
+	  document.addEventListener("DOMContentLoaded", () => {
+		// Переключение темы
+		const toggleButton = document.getElementById("theme-toggle");
+		const root = document.documentElement;
+		const isDark = () => root.classList.contains("dark");
+		const savedTheme = localStorage.getItem("theme");
+
+		if (!savedTheme) {
+		  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+		  root.classList.toggle("dark", prefersDark);
+		  localStorage.setItem("theme", prefersDark ? "dark" : "light");
+		  if (toggleButton) toggleButton.textContent = prefersDark ? "☀️" : "🌙";
+		} else {
+		  root.classList.toggle("dark", savedTheme === "dark");
+		  if (toggleButton) toggleButton.textContent = savedTheme === "dark" ? "☀️" : "🌙";
+		}
+
+		toggleButton?.addEventListener("click", () => {
+		  const next = isDark() ? "light" : "dark";
+		  root.classList.toggle("dark", next === "dark");
+		  localStorage.setItem("theme", next);
+		  toggleButton.textContent = next === "dark" ? "☀️" : "🌙";
 		});
-	</script>
-	
-	<script>
-	  function handleEnterKey(event) {
-		if (event.key === "Enter") {
-		  event.preventDefault();
-		  searchByNickname();
-		}
-	  }
 
-	  function searchByNickname() {
-		const input = document.getElementById("scroll-nick");
-		const query = input.value.trim().toLowerCase();
-		if (!query) return;
-
-		const rows = document.querySelectorAll('tr[data-nickname]');
-		let found = false;
-
-		for (const row of rows) {
-		  if (row.dataset.nickname === query) {
-			row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-			row.style.outline = '2px solid gold';
-			setTimeout(() => row.style.outline = '', 3000);
-			found = true;
-			break;
-		  }
-		}
-
-		if (!found) {
-		  alert("Игрок не найден.");
-		}
-	  }
-	</script>
-	
-	<script>
-	document.addEventListener("DOMContentLoaded", () => {
+		// Поиск никнейма
 		const input = document.getElementById("scroll-nick");
 		const datalist = document.getElementById("nicknames");
-
-		const allNicknames = [
-			{% for row in rating %}
-				"{{ row[1]|escape }}",
-			{% endfor %}
-		];
-
 		input?.addEventListener("input", () => {
-			const val = input.value.trim().toLowerCase();
-			datalist.innerHTML = "";
-
-			if (val.length >= 2) {
-				allNicknames
-					.filter(n => n.toLowerCase().includes(val))
-					.slice(0, 20)
-					.forEach(n => {
-						const option = document.createElement("option");
-						option.value = n;
-						datalist.appendChild(option);
-					});
-			}
+		  const val = input.value.trim().toLowerCase();
+		  datalist.innerHTML = "";
+		  if (val.length >= 2) {
+			allNicknames
+			  .filter(n => typeof n === "string" && n.toLowerCase().includes(val))
+			  .slice(0, 20)
+			  .forEach(n => {
+				const option = document.createElement("option");
+				option.value = n;
+				datalist.appendChild(option);
+			  });
+		  }
 		});
-	});
+	  });
 	</script>
 
 </body>

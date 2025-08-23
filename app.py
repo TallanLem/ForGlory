@@ -1,10 +1,10 @@
 import logging, os, sys, json, glob, re
+import collections
 
 from pprint import pprint
 from flask import Flask, render_template, request
 from datetime import datetime
 from operator import itemgetter
-import collections
 from collections import defaultdict
 
 
@@ -263,7 +263,9 @@ def index():
 	file1 = file2 = None
 	rating = []
 	level_ratings = []
+	best_by_param = []
 	filename_display = ""
+	diff_hours = None
 	selected_level = request.form.get("level")
 	files_display = [(f, extract_datetime_from_filename(f).strftime("%d.%m.%Y %H:%M")) for f in json_files]
 
@@ -306,6 +308,33 @@ def index():
 		if selected_param == "По уровню":
 			rating = []
 			level_ratings = get_level_ratings(data)
+			try:
+				files_sorted = sorted(json_files, key=extract_datetime_from_filename)
+				idx = files_sorted.index(selected_file)
+			except Exception:
+				files_sorted = json_files[:]  # fallback
+				idx = 0
+
+			prev_file = files_sorted[idx - 1] if idx - 1 >= 0 else None
+
+			def _count_by_level(snapshot: dict) -> dict:
+				counts = {}
+				for hero in snapshot.values():
+					lvl = hero.get("Уровень")
+					if isinstance(lvl, int):
+						counts[lvl] = counts.get(lvl, 0) + 1
+				return counts
+
+			curr_counts = _count_by_level(data)
+			prev_counts = _count_by_level(preloaded_data.get(prev_file, {})) if prev_file else {}
+
+			for g in level_ratings:
+				lvl = g["level"] if isinstance(g, dict) else getattr(g, "level", None)
+				delta = curr_counts.get(lvl, 0) - prev_counts.get(lvl, 0)
+				if isinstance(g, dict):
+					g["count_delta"] = delta
+				else:
+					setattr(g, "count_delta", delta)
 		else:
 			if selected_level and selected_level != "Все":
 				selected_level = int(selected_level)
@@ -349,43 +378,74 @@ def index():
 			if dt1 and dt2:
 				diff_hours = round((dt2 - dt1).total_seconds()/3600, 1)
 			filename_display = f"{dt1.strftime('%d.%m.%Y %H:%M')} → {dt2.strftime('%d.%m.%Y %H:%M')}" if dt1 and dt2 else ""
+	elif mode == "Лучшие (приросты)":
+		best_by_param = []
+		if len(json_files) >= 2:
+			param_key = stat_keys if selected_param == "Сумма статов" else selected_param
+			best = {}
+
+			for i in range(len(json_files) - 1):
+				f_new = json_files[i]
+				f_old = json_files[i + 1]
+				data2 = preloaded_data[f_new]
+				data1 = preloaded_data[f_old]
+
+				if selected_level and selected_level != "Все":
+					lvl = int(selected_level)
+					data2 = {pid: h for pid, h in data2.items() if h.get("Уровень") == lvl}
+
+				pair = build_growth_rating(data1, data2, param_key)
+
+				for pid, name, level, diff, extra in pair:
+					cur = best.get(pid)
+					if cur is None or diff > cur[3]:
+						best[pid] = (pid, name, level, diff, extra)
+
+			merged = list(best.values())
+			merged.sort(key=lambda t: t[3], reverse=True)
+			best_by_param = [{"param": selected_param, "rating": merged[:1000]}]
+		else:
+			best_by_param = []
 	else:
 		selected_param = request.args.get("param", param_options[0])
 
 	all_levels = sorted({hero.get("Уровень") for d in [preloaded_data[selected_file]] if d for hero in d.values() if isinstance(hero.get("Уровень"), int)}, reverse=True)
 
 	param_selectable = [
-			p for p in param_options
-			if not (
-				mode == "Прирост"
-				and (p.startswith("Кланы") or p.startswith("Братства") or p == "По уровню")
-			)
-		]
+		p for p in param_options
+		if not (
+			mode in ("Прирост", "Лучшие (приросты)")
+			and (p.startswith("Кланы") or p.startswith("Братства") or p == "По уровню")
+		)
+	]
 
 
-	return render_template("index.html",
-						   rating=rating,
-						   level_ratings=level_ratings,
-						   param=selected_param,
-						   mode=mode,
-						   filename_display=filename_display,
-						   json_files=json_files,
-						   selected_file=selected_file,
-						   file1=file1,
-						   file2=file2,
-						   param_options=param_options,
-						   column2_name=column2_name,
-						   column3_name=column3_name,
-						   param_selectable=param_selectable,
-						   files_display=files_display,
-						   extract_datetime_from_filename=extract_datetime_from_filename,
-						   enumerate=enumerate,
-						   diff_hours=diff_hours,
-						   all_levels=all_levels,
-						   selected_level=selected_level)
+	return render_template(
+		"index.html",
+		rating=rating,
+		level_ratings=level_ratings,
+		best_by_param=best_by_param,
+		param=selected_param,
+		mode=mode,
+		filename_display=filename_display,
+		json_files=json_files,
+		selected_file=selected_file,
+		file1=file1,
+		file2=file2,
+		param_options=param_options,
+		column2_name=column2_name,
+		column3_name=column3_name,
+		param_selectable=param_selectable,
+		files_display=[(f, extract_datetime_from_filename(f).strftime("%d.%m.%Y %H:%M")) for f in json_files],
+		extract_datetime_from_filename=extract_datetime_from_filename,
+		enumerate=enumerate,
+		diff_hours=(None if mode == "Лучшие (приросты)" else diff_hours),
+		all_levels=all_levels,
+		selected_level=selected_level,
+	)
 
 
 
 if __name__ == "__main__":
-	#~ app.run()
-	app.run(debug=True)
+	app.run()
+	#~ app.run(debug=True)

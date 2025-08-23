@@ -6,9 +6,12 @@ from flask import Flask, render_template, request
 from datetime import datetime
 from operator import itemgetter
 from collections import defaultdict
+from functools import lru_cache
 
 
 app = Flask(__name__)
+BEST_CACHE = {}
+ALL_LEVELS = set()
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -50,11 +53,6 @@ def preload_recent_data(max_files=30):
 			logging.warning(f"Ошибка при загрузке {f}: {e}")
 
 	return data_cache, files
-
-preloaded_data, preloaded_files = preload_recent_data()
-#~ print(len(preloaded_data))
-#~ pprint(preloaded_data.keys())
-#~ sys.exit()
 
 
 def build_rating(data, param, previous_data=None):
@@ -254,6 +252,73 @@ def build_group_rating(data, group_key, param, previous_data=None):
 	result.sort(key=itemgetter("score"), reverse=True)
 	return result
 
+def _collect_all_levels(preloaded_data):
+	levels = set()
+	for snap in preloaded_data.values():
+		for h in snap.values():
+			lvl = h.get("Уровень")
+			if isinstance(lvl, int):
+				levels.add(lvl)
+	return levels
+
+def _filter_by_level(snapshot, level_int_or_none):
+	if not level_int_or_none:
+		return snapshot
+	return {pid: h for pid, h in snapshot.items() if h.get("Уровень") == level_int_or_none}
+
+def _param_key_for_best(selected_param, stat_keys):
+	return stat_keys if selected_param == "Сумма статов" else selected_param
+
+def precompute_best_cache(json_files, preloaded_data, extract_datetime_from_filename, param_options, stat_keys):
+	"""
+	Строим BEST_CACHE для всех параметров (кроме групповых и 'По уровню')
+	и для каждого уровня (и 'Все' как None). Берём МАКСИМАЛЬНЫЙ суточный прирост
+	за все соседние пары выгрузок.
+	"""
+	BEST_CACHE.clear()
+	global ALL_LEVELS
+	ALL_LEVELS = _collect_all_levels(preloaded_data)
+
+	files_sorted = sorted(json_files, key=extract_datetime_from_filename)  # старые -> новые
+	if len(files_sorted) < 2:
+		return
+
+	# Параметры, для которых строим "Лучшие"
+	best_params = [
+		p for p in param_options
+		if p != "По уровню" and not p.startswith("Кланы") and not p.startswith("Братства")
+	]
+
+	levels_list = [None] + sorted(ALL_LEVELS)  # None = "Все"
+
+	for param in best_params:
+		pkey = _param_key_for_best(param, stat_keys)
+
+		for lvl in levels_list:
+			best = {}  # pid -> (pid, name, level, diff, extra)
+
+			for f_prev, f_curr in zip(files_sorted[:-1], files_sorted[1:]):
+				data1 = _filter_by_level(preloaded_data[f_prev], lvl)
+				data2 = _filter_by_level(preloaded_data[f_curr], lvl)
+
+				# build_growth_rating(data1, data2, pkey) должен вернуть [(pid, name, level, diff, extra), ...]
+				pair = build_growth_rating(data1, data2, pkey)
+
+				for pid, name, level, diff, extra in pair:
+					cur = best.get(pid)
+					if cur is None or diff > cur[3]:
+						best[pid] = (pid, name, level, diff, extra)
+
+			merged = sorted(best.values(), key=lambda t: t[3], reverse=True)[:1000]
+			BEST_CACHE[(param, lvl)] = merged
+
+
+preloaded_data, preloaded_files = preload_recent_data()
+#~ print(len(preloaded_data))
+#~ pprint(preloaded_data.keys())
+#~ sys.exit()
+precompute_best_cache(preloaded_files, preloaded_data, extract_datetime_from_filename, param_options, stat_keys)
+
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -379,33 +444,9 @@ def index():
 				diff_hours = round((dt2 - dt1).total_seconds()/3600, 1)
 			filename_display = f"{dt1.strftime('%d.%m.%Y %H:%M')} → {dt2.strftime('%d.%m.%Y %H:%M')}" if dt1 and dt2 else ""
 	elif mode == "Лучшие (приросты)":
-		best_by_param = []
-		if len(json_files) >= 2:
-			param_key = stat_keys if selected_param == "Сумма статов" else selected_param
-			best = {}
-
-			for i in range(len(json_files) - 1):
-				f_new = json_files[i]
-				f_old = json_files[i + 1]
-				data2 = preloaded_data[f_new]
-				data1 = preloaded_data[f_old]
-
-				if selected_level and selected_level != "Все":
-					lvl = int(selected_level)
-					data2 = {pid: h for pid, h in data2.items() if h.get("Уровень") == lvl}
-
-				pair = build_growth_rating(data1, data2, param_key)
-
-				for pid, name, level, diff, extra in pair:
-					cur = best.get(pid)
-					if cur is None or diff > cur[3]:
-						best[pid] = (pid, name, level, diff, extra)
-
-			merged = list(best.values())
-			merged.sort(key=lambda t: t[3], reverse=True)
-			best_by_param = [{"param": selected_param, "rating": merged[:1000]}]
-		else:
-			best_by_param = []
+		lvl_key = None if (not selected_level or selected_level == "Все") else int(selected_level)
+		best_list = BEST_CACHE.get((selected_param, lvl_key), [])
+		best_by_param = [{"param": selected_param, "rating": best_list}]
 	else:
 		selected_param = request.args.get("param", param_options[0])
 

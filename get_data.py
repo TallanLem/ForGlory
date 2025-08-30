@@ -1,4 +1,4 @@
-import asyncio, nest_asyncio, re, logging
+import asyncio, nest_asyncio, re, logging, gzip
 import json, glob, os, aiohttp, sys, requests, traceback
 
 from bs4 import BeautifulSoup
@@ -33,6 +33,13 @@ headers = {
 		"Chrome/119.0.0.0 Mobile Safari/537.36"
 	)
 }
+
+def load_json_any(full_path: str):
+    if full_path.endswith(".gz"):
+        with gzip.open(full_path, "rt", encoding="utf-8") as f:
+            return json.load(f)
+    with open(full_path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def save_cookies(session, path):
@@ -160,25 +167,27 @@ async def fetch_hero(session, hero_id, sem):
 
 
 def final_ids():
-	folder = DATA_DIR
-	pattern = re.compile(r"heroes_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.json")
-	files_with_dates = []
-	for filename in os.listdir(folder):
-		match = pattern.match(filename)
-		if match:
-			date_str = match.group(1)
-			files_with_dates.append((filename, date_str))
+    folder = DATA_DIR
+    pattern = re.compile(r"^heroes_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.json(?:\.gz)?$")
 
-	files_with_dates.sort(key=lambda x: x[1], reverse=True)
+    files_with_dates = []
+    for filename in os.listdir(folder):
+        m = pattern.match(filename)
+        if m:
+            date_str = m.group(1)
+            files_with_dates.append((filename, date_str))
 
-	if files_with_dates:
-		full_path = '{}/{}'.format(folder, files_with_dates[0][0])
-		with open(full_path, "r", encoding="utf-8") as f:
-			data = json.load(f)
-			dict_keys = [int(x) for x in list(data.keys())]
-			return dict_keys
-	else:
-		return None
+    files_with_dates.sort(key=lambda x: x[1], reverse=True)
+
+    if not files_with_dates:
+        return None
+
+    latest_name = files_with_dates[0][0]
+    full_path = os.path.join(folder, latest_name)
+    data = load_json_any(full_path)
+
+    return [int(x) for x in data.keys()]
+
 
 def check_site_ready(url, max_attempts=15, delay=600):
 	for attempt in range(1, max_attempts + 1):
@@ -203,10 +212,6 @@ def check_site_ready(url, max_attempts=15, delay=600):
 	return False
 
 def compress_existing_jsons(keep_days=0):
-	"""
-	Сжимает все heroes_*.json в heroes_*.json.gz и удаляет исходники.
-	keep_days — оставить несжатые файлы за N последних дней (0 = сжать все).
-	"""
 	import gzip, shutil, time
 	now = time.time()
 	for path in glob.glob(os.path.join(DATA_DIR, "heroes_*.json")):

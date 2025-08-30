@@ -1,9 +1,9 @@
-import logging, os, sys, json, glob, re
+import logging, os, sys, json, glob, re, gzip
 import collections
 
 from pprint import pprint
 from flask import Flask, render_template, request
-from datetime import datetime
+from datetime import datetime, timedelta
 from operator import itemgetter
 from collections import defaultdict
 from functools import lru_cache
@@ -15,7 +15,8 @@ ALL_LEVELS = set()
 
 logging.basicConfig(level=logging.DEBUG)
 
-data_folder = "data"
+JSON_DIR = "data"
+BEST_WINDOW_DAYS = int(os.environ.get("BEST_WINDOW_DAYS", "30"))
 
 stat_keys = ["Сила", "Защита", "Ловкость", "Мастерство", "Живучесть"]
 
@@ -27,6 +28,22 @@ param_options = [
 	"Братства по славе", "Братства по статам", "Кланы по славе", "Кланы по статам"
 ]
 
+def load_json_any(path: str):
+	if path.endswith(".gz"):
+		with gzip.open(path, "rt", encoding="utf-8") as f:
+			return json.load(f)
+	with open(path, "r", encoding="utf-8") as f:
+		return json.load(f)
+
+@lru_cache(maxsize=4)
+def snapshot(filename: str):
+	full_path = os.path.join(JSON_DIR, filename)
+	return load_json_any(full_path)
+
+def list_json_files():
+	files = [f for f in os.listdir(JSON_DIR) if f.startswith("heroes_") and f.endswith((".json", ".json.gz"))]
+	return sorted(files, key=extract_datetime_from_filename, reverse=True)
+
 
 def extract_datetime_from_filename(filename):
 	match = re.search(r"heroes_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})", filename)
@@ -34,25 +51,6 @@ def extract_datetime_from_filename(filename):
 		dt = datetime.strptime("-".join(match.groups()), "%Y-%m-%d-%H-%M-%S")
 		return dt
 	return None
-
-
-def preload_recent_data(max_files=30):
-	data_cache = {}
-
-	files = sorted(
-		glob.glob(os.path.join(data_folder, "heroes_*.json")),
-		key=lambda f: extract_datetime_from_filename(f),
-		reverse=True
-	)[:max_files]
-
-	for f in files:
-		try:
-			with open(f, encoding="utf-8") as fp:
-				data_cache[f] = json.load(fp)
-		except Exception as e:
-			logging.warning(f"Ошибка при загрузке {f}: {e}")
-
-	return data_cache, files
 
 
 def build_rating(data, param, previous_data=None):
@@ -294,60 +292,122 @@ def _filter_by_level(snapshot, level_int_or_none):
 def _param_key_for_best(selected_param, stat_keys):
 	return stat_keys if selected_param == "Сумма статов" else selected_param
 
-def precompute_best_cache(json_files, preloaded_data, extract_datetime_from_filename, param_options, stat_keys):
-	"""
-	Строим BEST_CACHE для всех параметров (кроме групповых и 'По уровню')
-	и для каждого уровня (и 'Все' как None). Берём МАКСИМАЛЬНЫЙ суточный прирост
-	за все соседние пары выгрузок.
-	"""
-	BEST_CACHE.clear()
-	global ALL_LEVELS
-	ALL_LEVELS = _collect_all_levels(preloaded_data)
+def precompute_best_cache(json_files, extract_datetime_from_filename, param_options, stat_keys):
+    BEST_CACHE.clear()
+    global ALL_LEVELS
 
-	files_sorted = sorted(json_files, key=extract_datetime_from_filename)  # старые -> новые
-	if len(files_sorted) < 2:
-		return
+    files_sorted = sorted(json_files, key=extract_datetime_from_filename)
+    if len(files_sorted) < 2:
+        ALL_LEVELS = set()
+        return
 
-	# Параметры, для которых строим "Лучшие"
-	best_params = [
-		p for p in param_options
-		if p != "По уровню" and not p.startswith("Кланы") and not p.startswith("Братства")
-	]
+    latest_dt = extract_datetime_from_filename(files_sorted[-1])
+    cutoff_dt = latest_dt - timedelta(days=BEST_WINDOW_DAYS if 'BEST_WINDOW_DAYS' in globals() else 30)
+    window_files = [f for f in files_sorted if extract_datetime_from_filename(f) >= cutoff_dt]
+    if len(window_files) < 2:
+        window_files = files_sorted
 
-	levels_list = [None] + sorted(ALL_LEVELS)  # None = "Все"
+    levels = set()
+    for f in window_files:
+        snap = snapshot(f)
+        for h in snap.values():
+            lvl = h.get("Уровень")
+            if isinstance(lvl, int):
+                levels.add(lvl)
+    ALL_LEVELS = levels
 
-	for param in best_params:
-		pkey = _param_key_for_best(param, stat_keys)
+    def _param_key_for_best(p):
+        return stat_keys if p == "Сумма статов" else p
 
-		for lvl in levels_list:
-			best = {}  # pid -> (pid, name, level, diff, extra)
+    best_params = [
+        p for p in param_options
+        if p != "По уровню" and not p.startswith("Кланы") and not p.startswith("Братства")
+    ]
 
-			for f_prev, f_curr in zip(files_sorted[:-1], files_sorted[1:]):
-				data1 = _filter_by_level(preloaded_data[f_prev], lvl)
-				data2 = _filter_by_level(preloaded_data[f_curr], lvl)
+    for param in best_params:
+        pkey = _param_key_for_best(param)
 
-				# build_growth_rating(data1, data2, pkey) должен вернуть [(pid, name, level, diff, extra), ...]
-				pair = build_growth_rating(data1, data2, pkey)
+        best_all = {}
+        best_by_level = defaultdict(dict)
 
-				for pid, name, level, diff, extra in pair:
-					cur = best.get(pid)
-					if cur is None or diff > cur[3]:
-						best[pid] = (pid, name, level, diff, extra)
+        for f_prev, f_curr in zip(window_files[:-1], window_files[1:]):
+            data1 = snapshot(f_prev)
+            data2 = snapshot(f_curr)
 
-			merged = sorted(best.values(), key=lambda t: t[3], reverse=True)[:1000]
-			BEST_CACHE[(param, lvl)] = merged
+            if pkey == stat_keys:
+                for pid, h2 in data2.items():
+                    h1 = data1.get(pid)
+                    if not h1:
+                        continue
+                    v2 = (h2.get("Сила", 0) + h2.get("Защита", 0) + h2.get("Ловкость", 0) +
+                          h2.get("Мастерство", 0) + h2.get("Живучесть", 0))
+                    v1 = (h1.get("Сила", 0) + h1.get("Защита", 0) + h1.get("Ловкость", 0) +
+                          h1.get("Мастерство", 0) + h1.get("Живучесть", 0))
+                    diff = v2 - v1
+                    if diff <= 0:
+                        continue
+                    name = h2.get("Имя")
+                    lvl = h2.get("Уровень")
+                    tup = (pid, name, lvl, diff, None)
+
+                    cur = best_all.get(pid)
+                    if (cur is None) or (diff > cur[3]):
+                        best_all[pid] = tup
+                    if isinstance(lvl, int):
+                        curL = best_by_level[lvl].get(pid)
+                        if (curL is None) or (diff > curL[3]):
+                            best_by_level[lvl][pid] = tup
+            else:
+                key = pkey
+                for pid, h2 in data2.items():
+                    h1 = data1.get(pid)
+                    if not h1:
+                        continue
+                    v2 = h2.get(key, 0)
+                    v1 = h1.get(key, 0)
+                    diff = v2 - v1
+                    if diff <= 0:
+                        continue
+                    name = h2.get("Имя")
+                    lvl = h2.get("Уровень")
+                    tup = (pid, name, lvl, diff, None)
+
+                    cur = best_all.get(pid)
+                    if (cur is None) or (diff > cur[3]):
+                        best_all[pid] = tup
+                    if isinstance(lvl, int):
+                        curL = best_by_level[lvl].get(pid)
+                        if (curL is None) or (diff > curL[3]):
+                            best_by_level[lvl][pid] = tup
+
+        merged_all = sorted(best_all.values(), key=lambda t: t[3], reverse=True)[:1000]
+        BEST_CACHE[(param, None)] = merged_all
+
+        for lvl in sorted(ALL_LEVELS):
+            vals = best_by_level.get(lvl)
+            if not vals:
+                BEST_CACHE[(param, lvl)] = []
+                continue
+            BEST_CACHE[(param, lvl)] = sorted(vals.values(), key=lambda t: t[3], reverse=True)[:1000]
+
+    # snapshot.cache_clear()  # опционально: можно очистить LRU после предрасчёта
 
 
-preloaded_data, preloaded_files = preload_recent_data()
-#~ print(len(preloaded_data))
-#~ pprint(preloaded_data.keys())
-#~ sys.exit()
-precompute_best_cache(preloaded_files, preloaded_data, extract_datetime_from_filename, param_options, stat_keys)
 
+json_files = list_json_files()
+for f in json_files[:3]:
+	try:
+		snapshot(f)
+	except Exception as e:
+		app.logger.warning(f"Warmup failed for {f}: {e}")
+
+print(3)
+precompute_best_cache(json_files, extract_datetime_from_filename, param_options, stat_keys)
+print(4)
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-	json_files = preloaded_files
+	global json_files
 	selected_param = "Слава"
 	selected_file = json_files[0] if json_files else None
 	file1 = file2 = None
@@ -387,13 +447,11 @@ def index():
 	if mode == "Общий":
 		selected_file = request.form.get("file", selected_file)
 
-		data = preloaded_data[selected_file]
+		data = snapshot(selected_file) if selected_file else {}
 
 		file_index = json_files.index(selected_file)
-		if file_index + 1 < len(json_files):
-			prev_file = preloaded_data[json_files[file_index + 1]]
-		else:
-			prev_file = None
+		prev_name = json_files[file_index + 1] if file_index + 1 < len(json_files) else None
+		prev_snap = snapshot(prev_name) if prev_name else None
 
 		if selected_param == "По уровню":
 			rating = []
@@ -405,7 +463,7 @@ def index():
 				files_sorted = json_files[:]  # fallback
 				idx = 0
 
-			prev_file = files_sorted[idx - 1] if idx - 1 >= 0 else None
+			prev_name = files_sorted[idx - 1] if idx - 1 >= 0 else None
 
 			def _count_by_level(snapshot: dict) -> dict:
 				counts = {}
@@ -416,7 +474,7 @@ def index():
 				return counts
 
 			curr_counts = _count_by_level(data)
-			prev_counts = _count_by_level(preloaded_data.get(prev_file, {})) if prev_file else {}
+			prev_counts = _count_by_level(snapshot(prev_name)) if prev_name else {}
 
 			for g in level_ratings:
 				lvl = g["level"] if isinstance(g, dict) else getattr(g, "level", None)
@@ -430,11 +488,11 @@ def index():
 				selected_level = int(selected_level)
 				data = {pid: h for pid, h in data.items() if h.get("Уровень") == selected_level}
 
-			rating = build_rating(data, selected_param, prev_file)
+			rating = build_rating(data, selected_param, prev_snap)
 
 		dt = extract_datetime_from_filename(selected_file)
 		diff_hours = None
-		if dt and prev_file:
+		if dt and prev_name:
 			prev_dt = extract_datetime_from_filename(json_files[file_index + 1])
 			if prev_dt:
 				diff_hours = round((dt - prev_dt).total_seconds()/3600, 1)
@@ -449,9 +507,9 @@ def index():
 		elif len(json_files) == 1:
 			file1 = file2 = json_files[0]
 
-		if file1 and file2 and file1 in preloaded_data and file2 in preloaded_data:
-			data1 = preloaded_data[file1]
-			data2 = preloaded_data[file2]
+		if file1 and file2:
+			data1 = snapshot(file1)
+			data2 = snapshot(file2)
 
 			if selected_level and selected_level != "Все":
 				selected_level = int(selected_level)
@@ -475,7 +533,8 @@ def index():
 	else:
 		selected_param = request.args.get("param", param_options[0])
 
-	all_levels = sorted({hero.get("Уровень") for d in [preloaded_data[selected_file]] if d for hero in d.values() if isinstance(hero.get("Уровень"), int)}, reverse=True)
+	base_snap = snapshot(selected_file) if selected_file else {}
+	all_levels = sorted({h.get("Уровень") for h in base_snap.values() if isinstance(h.get("Уровень"), int)}, reverse=True)
 
 	param_selectable = [
 		p for p in param_options

@@ -4,6 +4,7 @@ import json, glob, os, aiohttp, sys, requests, traceback
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 from time import sleep
+from gzip import open as gzopen
 
 
 logging.basicConfig(
@@ -201,6 +202,27 @@ def check_site_ready(url, max_attempts=15, delay=600):
 	logging.error("Site check failed after all attempts. Aborting")
 	return False
 
+def compress_existing_jsons(keep_days=0):
+	"""
+	Сжимает все heroes_*.json в heroes_*.json.gz и удаляет исходники.
+	keep_days — оставить несжатые файлы за N последних дней (0 = сжать все).
+	"""
+	import gzip, shutil, time
+	now = time.time()
+	for path in glob.glob(os.path.join(DATA_DIR, "heroes_*.json")):
+		if keep_days > 0:
+			mtime = os.path.getmtime(path)
+			if now - mtime < keep_days * 86400:
+				continue
+		gz_path = path + ".gz"
+		if os.path.exists(gz_path):
+			os.remove(path)
+			continue
+		with open(path, "rb") as src, gzip.open(gz_path, "wb") as dst:
+			shutil.copyfileobj(src, dst)
+		os.remove(path)
+		logging.info(f"Compressed & removed: {path} -> {gz_path}")
+
 async def main(hero_ids, concurrent_limit):
 	sem = asyncio.Semaphore(concurrent_limit)
 	results = {}
@@ -225,9 +247,12 @@ async def main(hero_ids, concurrent_limit):
 
 	moscow_time = datetime.utcnow() + timedelta(hours=3)
 	timestamp = moscow_time.strftime("%Y-%m-%d_%H-%M-%S")
-	filename = os.path.join(DATA_DIR, f"heroes_{timestamp}.json")
-	with open(filename, "w", encoding="utf-8") as f:
-		json.dump(results, f, indent=2, ensure_ascii=False)
+	sorted_data = dict(sorted(results.items(), key=lambda x: int(x[0])))
+
+	gz_path = os.path.join(DATA_DIR, f"heroes_{timestamp}.json.gz")
+	with gzopen(gz_path, "wt", encoding="utf-8") as f:
+		json.dump(sorted_data, f, ensure_ascii=False)
+	logging.info(f"Saved compressed snapshot: {gz_path}")
 
 
 if __name__ == "__main__":
@@ -238,11 +263,4 @@ if __name__ == "__main__":
 	nest_asyncio.apply()
 	asyncio.run(main(hero_ids, concurrent_limit=10))
 
-	json_files = sorted(glob.glob(os.path.join(DATA_DIR, "heroes_*.json")), key=os.path.getmtime, reverse=True)
-	if json_files:
-		latest_file = json_files[0]
-		with open(latest_file, encoding="utf-8") as f:
-			data = json.load(f)
-		sorted_data = dict(sorted(data.items(), key=lambda x: int(x[0])))
-		with open(latest_file, "w", encoding="utf-8") as f:
-			json.dump(sorted_data, f, indent=2, ensure_ascii=False)
+	#~ compress_existing_jsons(keep_days=0)

@@ -150,6 +150,10 @@ function handleEnterKey(event) {
     </button>
 
     {% if mode == 'Лучшие (приросты)' %}
+		  <div style="font-size:0.9em; color:#666; margin:4px 0 10px;">
+			Лучшие суточные приросты за последние {{ 30 }} дней.
+		  </div>
+	
       {% set blocks = best_by_param | selectattr('param', 'equalto', param) | list %}
       {% set block = blocks[0] if blocks|length > 0 else None %}
       {% if block and block.rating and block.rating|length > 0 %}
@@ -166,10 +170,15 @@ function handleEnterKey(event) {
               <tr data-nickname="{{ row[1]|lower }}">
                 <td style="width:40px; text-align:center;">{% if loop.index == 1 %}🥇{% elif loop.index == 2 %}🥈{% elif loop.index == 3 %}🥉{% else %}{{ loop.index }}{% endif %}</td>
                 <td style="text-align:left;">
-                  <a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank" style="display:inline-flex; width:100%; overflow:hidden; min-width:0;">
-                    <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:inline-block; max-width:100%;">{{ row[1] }}</span>
-                    <span style="white-space:nowrap; flex-shrink:0; margin-left:4px;">[{{ row[2] }}]</span>
-                  </a>
+					<a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank"
+					   style="display:inline-flex; width:100%; overflow:hidden; min-width:0; align-items:baseline;">
+					  <span style="flex:1 1 auto; min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
+						{{ row[1] }}
+					  </span>
+					  <span style="flex:0 0 auto; white-space:nowrap; margin-left:6px;">
+						[{{ row[2] }}]
+					  </span>
+					</a>
                 </td>
                 <td style="text-align:center;">{{ row[3] }}</td>
               </tr>
@@ -239,9 +248,9 @@ function handleEnterKey(event) {
 						</td>
                       <td class="wide-name shorten" style="text-align: left; padding-right: 6px;">
                         <a href="https://playwekings.mobi/hero/detail?player={{ player.ID }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
-                          <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block;">
-                          {{ player.name }}
-                          </span>
+							<span style="flex:1 1 auto; min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
+							  {{ player.name }}
+							</span>
                         </a>
                       </td>
                       <td class="tight" style="text-align:center;">{{ player.strength }}</td>
@@ -307,7 +316,7 @@ function handleEnterKey(event) {
 								<td style="width: clamp(300px, 68%, 760px);">
 								  <a href="https://playwekings.mobi/hero/detail?player={{ hid }}" target="_blank"
 									 style="display:inline-flex; width:100%; overflow:hidden; min-width:0; align-items:baseline;">
-									<span style="flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
+									<span style="flex:1 1 auto; min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
 									  {{ hname }}
 									</span>
 									<span style="flex:0 0 auto; white-space:nowrap; margin-left:6px;">
@@ -360,10 +369,15 @@ function handleEnterKey(event) {
               <tr data-nickname="{{ name|lower|e }}" {% if highlighted %}style="background: rgba(255,215,0,0.2);"{% endif %}>
                 <td style="width:40px; text-align:center;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
                 <td class="wide-name">
-                  <a href="https://playwekings.mobi/hero/detail?player={{ ID }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
-                    <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; max-width: 100%;">{{ name }}</span>
-                    <span style="white-space: nowrap; flex-shrink: 0; margin-left: 4px;">[{{ level }}]</span>
-                  </a>
+					<a href="https://playwekings.mobi/hero/detail?player={{ ID }}" target="_blank"
+					   style="display:inline-flex; width:100%; overflow:hidden; min-width:0; align-items:baseline;">
+					  <span style="flex:1 1 auto; min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
+						{{ name }}
+					  </span>
+					  <span style="flex:0 0 auto; white-space:nowrap; margin-left:6px;">
+						[{{ level }}]
+					  </span>
+					</a>
                 </td>
 				<td style="text-align: center;">
 				  {{ value }}

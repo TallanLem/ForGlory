@@ -135,6 +135,7 @@ def build_growth_rating(data1, data2, param):
 	return rating
 
 def get_level_ratings(data):
+	from collections import defaultdict
 	grouped = defaultdict(list)
 	for hero in data.values():
 		if "Уровень" in hero and "Сила" in hero:
@@ -142,21 +143,37 @@ def get_level_ratings(data):
 
 	for level in grouped:
 		grouped[level].sort(
-					key=lambda h: (
-						h.get("Сила", 0),
-						h.get("Защита", 0),
-						h.get("Ловкость", 0),
-						h.get("Мастерство", 0),
-						h.get("Живучесть", 0)
-					),
-					reverse=True
-				)
+			key=lambda h: (
+				h.get("Сила", 0),
+				h.get("Защита", 0),
+				h.get("Ловкость", 0),
+				h.get("Мастерство", 0),
+				h.get("Живучесть", 0)
+			),
+			reverse=True
+		)
 
 	sorted_levels = sorted(grouped.keys(), reverse=True)
 
-	return [
-		{
+	result = []
+	for level in sorted_levels:
+		players = grouped[level]
+		n = len(players) or 1
+		avg_strength = sum(p.get("Сила", 0) for p in players) / n
+		avg_defense  = sum(p.get("Защита", 0) for p in players) / n
+		avg_dex      = sum(p.get("Ловкость", 0) for p in players) / n
+		avg_mastery  = sum(p.get("Мастерство", 0) for p in players) / n
+		avg_vit      = sum(p.get("Живучесть", 0) for p in players) / n
+
+		result.append({
 			"level": level,
+			"avg": {
+				"strength": avg_strength,
+				"defense": avg_defense,
+				"dexterity": avg_dex,
+				"mastery": avg_mastery,
+				"vitality": avg_vit,
+			},
 			"players": [
 				{
 					"ID": hero.get("ID") or hero.get("id"),
@@ -166,13 +183,13 @@ def get_level_ratings(data):
 					"defense": hero.get("Защита", 0),
 					"dexterity": hero.get("Ловкость", 0),
 					"mastery": hero.get("Мастерство", 0),
-					"vitality": hero.get("Живучесть", 0),
+					"vitality": hero.get("Живучесть", 0)
 				}
-				for hero in grouped[level]
+				for hero in players
 			]
-		}
-		for level in sorted_levels
-	]
+		})
+	return result
+
 
 
 def build_group_rating(data, group_key, param, previous_data=None):

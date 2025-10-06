@@ -238,6 +238,17 @@ function handleEnterKey(event) {
 						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/vitality.png') }}" alt="vitality" class="icon"></th>
 					  </tr>
 					</thead>
+					{% if group.avg %}
+						<tr class="avg-row">
+						  <td class="tight" style="text-align:center;">Ø</td>
+						  <td class="wide-name" style="text-align:left; font-weight:600;">Среднее по уровню</td>
+						  <td class="tight" style="text-align:center;">{{ group.avg['strength']|round(0)|int }}</td>
+						  <td class="tight" style="text-align:center;">{{ group.avg['defense']|round(0)|int }}</td>
+						  <td class="tight" style="text-align:center;">{{ group.avg['dexterity']|round(0)|int }}</td>
+						  <td class="tight" style="text-align:center;">{{ group.avg['mastery']|round(0)|int }}</td>
+						  <td class="tight" style="text-align:center;">{{ group.avg['vitality']|round(0)|int }}</td>
+						</tr>
+					{% endif %}
                   <tbody>
                     {% for player in group.players %}
                     <tr data-nickname="{{ player.name|lower|e }}">

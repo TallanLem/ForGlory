@@ -1,0 +1,7 @@
+User-agent: *
+Disallow: /static/
+Crawl-delay: 5
+
+User-agent: Yandex
+Disallow: /
+

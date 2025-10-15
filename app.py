@@ -2,7 +2,7 @@ import logging, os, sys, json, glob, re, gzip
 import collections
 
 from pprint import pprint
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, abort, send_from_directory
 from datetime import datetime, timedelta
 from operator import itemgetter
 from collections import defaultdict
@@ -12,6 +12,22 @@ from functools import lru_cache
 app = Flask(__name__)
 BEST_CACHE = {}
 ALL_LEVELS = set()
+
+@app.before_request
+def block_bots_on_heavy():
+	if request.path in ("/robots.txt",) or request.path.startswith("/static/"):
+		return
+	ua = (request.headers.get("User-Agent") or "").lower()
+	bot_pattern = re.compile(r"(?:bot|crawler|spider|scraper|curl|wget|python-requests|httpclient)", re.I)
+	if bot_pattern.search(ua):
+		if request.path == "/":
+			abort(403)
+
+@app.route('/robots.txt')
+def robots_txt():
+	here = os.path.dirname(os.path.abspath(__file__))
+	return send_from_directory(here, 'robots.txt', mimetype='text/plain')
+
 
 logging.basicConfig(level=logging.DEBUG)
 

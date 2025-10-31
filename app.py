@@ -12,21 +12,23 @@ from functools import lru_cache
 app = Flask(__name__)
 BEST_CACHE = {}
 ALL_LEVELS = set()
+BEST_WINDOW_DAYS   = int(os.environ.get("BEST_WINDOW_DAYS", "30"))
+MAX_BEST_PER_LIST  = int(os.environ.get("MAX_BEST_PER_LIST", "1000"))
 
-@app.before_request
-def block_bots_on_heavy():
-	if request.path in ("/robots.txt",) or request.path.startswith("/static/"):
-		return
-	ua = (request.headers.get("User-Agent") or "").lower()
-	bot_pattern = re.compile(r"(?:bot|crawler|spider|scraper|curl|wget|python-requests|httpclient)", re.I)
-	if bot_pattern.search(ua):
-		if request.path == "/":
-			abort(403)
+#~ @app.before_request
+#~ def block_bots_on_heavy():
+	#~ if request.path in ("/robots.txt",) or request.path.startswith("/static/"):
+		#~ return
+	#~ ua = (request.headers.get("User-Agent") or "").lower()
+	#~ bot_pattern = re.compile(r"(?:bot|crawler|spider|scraper|curl|wget|python-requests|httpclient)", re.I)
+	#~ if bot_pattern.search(ua):
+		#~ if request.path == "/":
+			#~ abort(403)
 
-@app.route('/robots.txt')
-def robots_txt():
-	here = os.path.dirname(os.path.abspath(__file__))
-	return send_from_directory(here, 'robots.txt', mimetype='text/plain')
+#~ @app.route('/robots.txt')
+#~ def robots_txt():
+	#~ here = os.path.dirname(os.path.abspath(__file__))
+	#~ return send_from_directory(here, 'robots.txt', mimetype='text/plain')
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -51,7 +53,7 @@ def load_json_any(path: str):
 	with open(path, "r", encoding="utf-8") as f:
 		return json.load(f)
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=2)
 def snapshot(filename: str):
 	full_path = os.path.join(JSON_DIR, filename)
 	return load_json_any(full_path)
@@ -228,7 +230,6 @@ def build_group_rating(data, group_key, param, previous_data=None):
 	def build_groups(dataset, id_mode):
 		groups = {}
 		for hero in dataset.values():
-			# 1) определить ключ группы
 			if id_mode:
 				group_id = hero.get(id_key, 0)
 				group_name = (hero.get(group_key, "") or "").strip()
@@ -245,13 +246,15 @@ def build_group_rating(data, group_key, param, previous_data=None):
 				if key not in groups:
 					groups[key] = {"name": group_name, "score": 0, "members": []}
 
-			# 2) текущее значение параметра
 			value = get_value(hero)
-			hero["value"] = value  # (как и раньше, не создаём копии)
 			groups[key]["score"] += value
-			groups[key]["members"].append(hero)
+			groups[key]["members"].append({
+				"ID":      hero.get("ID") or hero.get("id") or hero.get("pid"),
+				"Имя":     hero.get("Имя", "Безымянный"),
+				"Уровень": hero.get("Уровень", "?"),
+				"value":   value,
+			})
 
-		# 3) сортировка участников и ранги
 		for g in groups.values():
 			g["members"].sort(key=lambda h: h["value"], reverse=True)
 			for i, h in enumerate(g["members"], 1):
@@ -262,17 +265,14 @@ def build_group_rating(data, group_key, param, previous_data=None):
 	current = build_groups(data, use_id_mode)
 	previous = build_groups(previous_data, use_id_mode) if previous_data else {}
 
-	# --- карта предыдущих значений по pid, чтобы посчитать дельты участников ---
 	prev_value_by_pid = {}
 	if previous:
 		for g in previous.values():
 			for h in g.get("members", []):
 				pid = h.get("ID") or h.get("id") or h.get("pid")
 				if pid is not None:
-					# в previous уже посчитан h["value"] тем же get_value
 					prev_value_by_pid[pid] = h.get("value", 0)
 
-	# --- собрать итог по группам + проставить delta каждому участнику ---
 	all_keys = set(current) | set(previous)
 	result = []
 	for key in all_keys:
@@ -284,7 +284,6 @@ def build_group_rating(data, group_key, param, previous_data=None):
 		score_prev = prev_group.get("score", 0)
 
 		members_now = curr_group.get("members", [])
-		# персональные дельты участников (None, если нет прошлого снэпшота или герой не найден)
 		for h in members_now:
 			pid = h.get("ID") or h.get("id") or h.get("pid")
 			if pid is not None and pid in prev_value_by_pid:
@@ -335,7 +334,7 @@ def precompute_best_cache(json_files, extract_datetime_from_filename, param_opti
         return
 
     latest_dt = extract_datetime_from_filename(files_sorted[-1])
-    cutoff_dt = latest_dt - timedelta(days=BEST_WINDOW_DAYS if 'BEST_WINDOW_DAYS' in globals() else 30)
+    cutoff_dt = latest_dt - timedelta(days=BEST_WINDOW_DAYS)
     window_files = [f for f in files_sorted if extract_datetime_from_filename(f) >= cutoff_dt]
     if len(window_files) < 2:
         window_files = files_sorted
@@ -413,7 +412,7 @@ def precompute_best_cache(json_files, extract_datetime_from_filename, param_opti
                         if (curL is None) or (diff > curL[3]):
                             best_by_level[lvl][pid] = tup
 
-        merged_all = sorted(best_all.values(), key=lambda t: t[3], reverse=True)[:1000]
+        merged_all = sorted(best_all.values(), key=lambda t: t[3], reverse=True)[:MAX_BEST_PER_LIST]
         BEST_CACHE[(param, None)] = merged_all
 
         for lvl in sorted(ALL_LEVELS):
@@ -421,22 +420,20 @@ def precompute_best_cache(json_files, extract_datetime_from_filename, param_opti
             if not vals:
                 BEST_CACHE[(param, lvl)] = []
                 continue
-            BEST_CACHE[(param, lvl)] = sorted(vals.values(), key=lambda t: t[3], reverse=True)[:1000]
+            BEST_CACHE[(param, lvl)] = sorted(vals.values(), key=lambda t: t[3], reverse=True)[:MAX_BEST_PER_LIST]
 
-    # snapshot.cache_clear()  # опционально: можно очистить LRU после предрасчёта
+    # snapshot.cache_clear()
 
 
 
 json_files = list_json_files()
-for f in json_files[:3]:
+for f in json_files[:2]:
 	try:
 		snapshot(f)
 	except Exception as e:
 		app.logger.warning(f"Warmup failed for {f}: {e}")
 
-print(3)
 precompute_best_cache(json_files, extract_datetime_from_filename, param_options, stat_keys)
-print(4)
 
 @app.route("/", methods=["GET", "POST"])
 def index():

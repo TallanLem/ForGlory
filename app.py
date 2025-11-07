@@ -15,20 +15,20 @@ ALL_LEVELS = set()
 BEST_WINDOW_DAYS   = int(os.environ.get("BEST_WINDOW_DAYS", "30"))
 MAX_BEST_PER_LIST  = int(os.environ.get("MAX_BEST_PER_LIST", "1000"))
 
-#~ @app.before_request
-#~ def block_bots_on_heavy():
-	#~ if request.path in ("/robots.txt",) or request.path.startswith("/static/"):
-		#~ return
-	#~ ua = (request.headers.get("User-Agent") or "").lower()
-	#~ bot_pattern = re.compile(r"(?:bot|crawler|spider|scraper|curl|wget|python-requests|httpclient)", re.I)
-	#~ if bot_pattern.search(ua):
-		#~ if request.path == "/":
-			#~ abort(403)
+@app.before_request
+def block_bots_on_heavy():
+	if request.path in ("/robots.txt",) or request.path.startswith("/static/"):
+		return
+	ua = (request.headers.get("User-Agent") or "").lower()
+	bot_pattern = re.compile(r"(?:bot|crawler|spider|scraper|curl|wget|python-requests|httpclient)", re.I)
+	if bot_pattern.search(ua):
+		if request.path == "/":
+			abort(403)
 
-#~ @app.route('/robots.txt')
-#~ def robots_txt():
-	#~ here = os.path.dirname(os.path.abspath(__file__))
-	#~ return send_from_directory(here, 'robots.txt', mimetype='text/plain')
+@app.route('/robots.txt')
+def robots_txt():
+	here = os.path.dirname(os.path.abspath(__file__))
+	return send_from_directory(here, 'robots.txt', mimetype='text/plain')
 
 
 logging.basicConfig(level=logging.DEBUG)

@@ -1,44 +1,44 @@
 [
-    {
-        "domain": "playwekings.mobi",
-        "expirationDate": 1785356863.18263,
-        "hostOnly": true,
-        "httpOnly": true,
-        "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
-        "path": "/",
-        "sameSite": "lax",
-        "secure": false,
-        "session": false,
-        "storeId": "1",
-        "value": "eyJpdiI6IktvSnA3TUxMTDlpVGIxc1BidVoyYlE9PSIsInZhbHVlIjoicTZYdDgyTS9Ea0VlWE5GQnRzMStFSGo3b0xkaVFZM2Nka2paWWdCUE5Wemh0QkNQaW9aSEJreTdJdktQYU5BOWQwZlF5akRtekg3blQwaUpMdExnZG05NmV5eEhOd2E4aUpVaE1IRmk1amhDaXBXb0dLZTNUZ2pCMjV2UTUwSzBoYUIyYVNHaTRhWWY2ZVQ0T0RYZ2d4dW5QWWdYc1hrTHhYUXlrbXd2Ti92VXN1YWhjN3poRURsMzdvMnczVlNhc1M0Wm9YeDgxTHpzcklDaWF3K2hWU0N6aE5hNmtQZ25HdHFmVTFYRDVVRT0iLCJtYWMiOiIwOTc2NmUzYWMzM2E4NGYwMDFkMzcxOTExZWI3NTgzNmNlYmNiYjc3MjQxNmYyNGM3OGQ0YjE5NjE1NjQxNzU0IiwidGFnIjoiIn0%3D",
-        "id": 1
-    },
-    {
-        "domain": "playwekings.mobi",
-        "expirationDate": 1750811263.266572,
-        "hostOnly": true,
-        "httpOnly": true,
-        "name": "wekings_session",
-        "path": "/",
-        "sameSite": "lax",
-        "secure": false,
-        "session": false,
-        "storeId": "1",
-        "value": "eyJpdiI6IkY3VXFOQnh3T2VPNitGcGhjaENDa2c9PSIsInZhbHVlIjoiYUpRSXVtM0srZFVMSEp6dFNBOFlxL3p3SzF4WmxhaHVkazh3aVltY1ZWMHVBYTU5N0hxQnlGRStGcGpaVXRlbjQvbVVxVzlDc1crcFlrUE13RUEzWEsxc0ZrNGFReldpZW55VTl1NXE5K21uZFZ5dkxnR3IzeE5CNVl2WkszMXEiLCJtYWMiOiIxMDJhNDhiMTU2YWNkNmY5NmMwMzRkZWFjYWJiZGE5MDMwN2RmNDNhZjk0ZjNlOGFjMzI5NWM2OTU5YzM0ZDJmIiwidGFnIjoiIn0%3D",
-        "id": 2
-    },
-    {
-        "domain": "playwekings.mobi",
-        "expirationDate": 1750811263.266513,
-        "hostOnly": true,
-        "httpOnly": false,
-        "name": "XSRF-TOKEN",
-        "path": "/",
-        "sameSite": "lax",
-        "secure": false,
-        "session": false,
-        "storeId": "1",
-        "value": "eyJpdiI6Ik9wSHBwVUpWMmVydWxDUGREb1BJUVE9PSIsInZhbHVlIjoiczUxcFA3bjkyZTNMRnhRWDJCTjJpTElBazFaamlKSk5haGdpYWdUZVJkb2FYbVNkQnBSNXNtVEhjMVp6SlplU3B0ckdPRU5qQksvQk8vZGV6WTRndmhKd2s0UTdVQ1FNODVKeGZnajhkZEQvOVl6VUhNV3lneW5ocVpIUUlhS3kiLCJtYWMiOiI2NmExMDc3ODE5MTgwMmE0NzAxYTZlYmM3NTJiNzVmZWQwYmExMTA0NzdkYmNkYWNkZDgxZDMwZmIxNDhkZmRiIiwidGFnIjoiIn0%3D",
-        "id": 3
-    }
+{
+    "domain": "playwekings.mobi",
+    "expirationDate": 1797100327.974357,
+    "hostOnly": true,
+    "httpOnly": true,
+    "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
+    "path": "/",
+    "sameSite": "lax",
+    "secure": false,
+    "session": false,
+    "storeId": "1",
+    "value": "eyJpdiI6IkRUVzBoQzVvYzRHWU9NMENlaUVBTkE9PSIsInZhbHVlIjoiWXI4bjdNZW5KWFIrTW9oY3NNZDBuWWlLbTZvQUkzRkVIZmRLWjhRMGlISHg3NTZadEZSMTlZZitLbmNROFN4cU0rVzFCbXBielZIV0JqRlFBdnJuSmtrUDlMMTR4QWZBRENkTDhWeG9iSGh4Sit6encwckVmaDRSRjVUZ0pGWldkQTBnQTFrT3Y3eHlVdHhqME5jaDZNempJSmNONmhySlZrMzBJYitrK0FvaENJOEo3RVBYSWljWlU1a0kralNZNDFjbTBuTWU4eDhjY3FJL0s4dlY4VzlmRDNTMlB2QW5MbG42ZktVVHZkWT0iLCJtYWMiOiI3NjYxMjhiNjRmZTQxYTY0MjA0YjhjZTRhYjlhMzMzY2I0OGYwYzZjODIxZWViNGY2MjVhMWEwMDYyZmU2NTRlIiwidGFnIjoiIn0%3D",
+    "id": 1
+},
+{
+    "domain": "playwekings.mobi",
+    "expirationDate": 1762554738.679409,
+    "hostOnly": true,
+    "httpOnly": true,
+    "name": "wekings_session",
+    "path": "/",
+    "sameSite": "lax",
+    "secure": false,
+    "session": false,
+    "storeId": "1",
+    "value": "eyJpdiI6InFBVnlRMDQwSzlTZ0wxeTQ3MFUzN2c9PSIsInZhbHVlIjoiMTVQSWVrMXphMmNGZjBVdDAwNHVFRitYN1REQ2RyL0J4dW0zc1FKRXRON0RrVzUrcFlWOEtmZitIUllscEpsZE9jajVEQnpBeTNVUVNMakpRTVRWWTh0VGg3Mnh1OFN3Q1dyTER3eTRNOE5Ldkc4Q3l2VHZ3a0J3eHo5Z0JRUXEiLCJtYWMiOiI3ZGY2OTEyOWQwOTEwYTJmZmU2MjgyYjkyNWY4YmM3MjNhMmNlODhhNWE4ZmU1ZGQ0NTQxODJkOTYzZDQ5MTAwIiwidGFnIjoiIn0%3D",
+    "id": 2
+},
+{
+    "domain": "playwekings.mobi",
+    "expirationDate": 1762554738.679334,
+    "hostOnly": true,
+    "httpOnly": false,
+    "name": "XSRF-TOKEN",
+    "path": "/",
+    "sameSite": "lax",
+    "secure": false,
+    "session": false,
+    "storeId": "1",
+    "value": "eyJpdiI6InNMUjc1dG5kdDk1c2Uyd3ViV0Z1cEE9PSIsInZhbHVlIjoiS2FJYlhpcWhpL1lGN3p3SldXNTBJcUh5Mk52REY3RUF4TnhzMkhSbmg4K2VVMUhzY0RRYTNINnJndHR6NmVkWUgrVGZDSlVzSDZMVVZJVWxQM1lqZjE5MlpBVGtzVWtLRjlpYkdqNjcyUkRWbG9WdFVCMy9kbXgyQnpZVEYybkgiLCJtYWMiOiJmNTE2MTZkZWYwMWE1YTdmNDZhNmMxMTBmNDAyNDE4MjUwMTViOTYzNTZlNzA4MjQ3YTI5YTI0ZjFjOWE2MDE1IiwidGFnIjoiIn0%3D",
+    "id": 3
+}
 ]

@@ -151,7 +151,10 @@ function handleEnterKey(event) {
 
     {% if mode == 'Лучшие (приросты)' %}
 		  <div style="font-size:0.9em; color:#666; margin:4px 0 10px;">
-			Лучшие суточные приросты за последние {{ 30 }} дней.
+			<p>
+			  Лучшие суточные приросты за последние {{ 30 }} дней.<br>
+			  Пропуски более 26&nbsp;часов не учитываются.
+			</p>
 		  </div>
 	
       {% set blocks = best_by_param | selectattr('param', 'equalto', param) | list %}

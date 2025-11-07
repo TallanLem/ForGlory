@@ -12,8 +12,10 @@ from functools import lru_cache
 app = Flask(__name__)
 BEST_CACHE = {}
 ALL_LEVELS = set()
+JSON_DIR = "data"
 BEST_WINDOW_DAYS   = int(os.environ.get("BEST_WINDOW_DAYS", "30"))
 MAX_BEST_PER_LIST  = int(os.environ.get("MAX_BEST_PER_LIST", "1000"))
+BEST_MAX_GAP_HOURS = int(os.environ.get("BEST_MAX_GAP_HOURS", "26"))
 
 @app.before_request
 def block_bots_on_heavy():
@@ -32,9 +34,6 @@ def robots_txt():
 
 
 logging.basicConfig(level=logging.DEBUG)
-
-JSON_DIR = "data"
-BEST_WINDOW_DAYS = int(os.environ.get("BEST_WINDOW_DAYS", "30"))
 
 stat_keys = ["Сила", "Защита", "Ловкость", "Мастерство", "Живучесть"]
 
@@ -325,104 +324,112 @@ def _param_key_for_best(selected_param, stat_keys):
 	return stat_keys if selected_param == "Сумма статов" else selected_param
 
 def precompute_best_cache(json_files, extract_datetime_from_filename, param_options, stat_keys):
-    BEST_CACHE.clear()
-    global ALL_LEVELS
+	BEST_CACHE.clear()
+	global ALL_LEVELS
 
-    files_sorted = sorted(json_files, key=extract_datetime_from_filename)
-    if len(files_sorted) < 2:
-        ALL_LEVELS = set()
-        return
+	files_sorted = sorted(json_files, key=extract_datetime_from_filename)
+	if len(files_sorted) < 2:
+		ALL_LEVELS = set()
+		return
 
-    latest_dt = extract_datetime_from_filename(files_sorted[-1])
-    cutoff_dt = latest_dt - timedelta(days=BEST_WINDOW_DAYS)
-    window_files = [f for f in files_sorted if extract_datetime_from_filename(f) >= cutoff_dt]
-    if len(window_files) < 2:
-        window_files = files_sorted
+	latest_dt = extract_datetime_from_filename(files_sorted[-1])
+	cutoff_dt = latest_dt - timedelta(days=BEST_WINDOW_DAYS)
+	window_files = [f for f in files_sorted if extract_datetime_from_filename(f) >= cutoff_dt]
+	if len(window_files) < 2:
+		window_files = files_sorted
 
-    levels = set()
-    for f in window_files:
-        snap = snapshot(f)
-        for h in snap.values():
-            lvl = h.get("Уровень")
-            if isinstance(lvl, int):
-                levels.add(lvl)
-    ALL_LEVELS = levels
+	levels = set()
+	for f in window_files:
+		snap = snapshot(f)
+		for h in snap.values():
+			lvl = h.get("Уровень")
+			if isinstance(lvl, int):
+				levels.add(lvl)
+	ALL_LEVELS = levels
 
-    def _param_key_for_best(p):
-        return stat_keys if p == "Сумма статов" else p
+	def _param_key_for_best(p):
+		return stat_keys if p == "Сумма статов" else p
 
-    best_params = [
-        p for p in param_options
-        if p != "По уровню" and not p.startswith("Кланы") and not p.startswith("Братства")
-    ]
+	best_params = [
+		p for p in param_options
+		if p != "По уровню" and not p.startswith("Кланы") and not p.startswith("Братства")
+	]
 
-    for param in best_params:
-        pkey = _param_key_for_best(param)
+	for param in best_params:
+		pkey = _param_key_for_best(param)
 
-        best_all = {}
-        best_by_level = defaultdict(dict)
+		best_all = {}
+		best_by_level = defaultdict(dict)
 
-        for f_prev, f_curr in zip(window_files[:-1], window_files[1:]):
-            data1 = snapshot(f_prev)
-            data2 = snapshot(f_curr)
+		for f_prev, f_curr in zip(window_files[:-1], window_files[1:]):
+			dt_prev = extract_datetime_from_filename(f_prev)
+			dt_curr = extract_datetime_from_filename(f_curr)
+			if not dt_prev or not dt_curr:
+				continue
+			gap_h = (dt_curr - dt_prev).total_seconds() / 3600.0
+			if gap_h > BEST_MAX_GAP_HOURS:
+				continue
 
-            if pkey == stat_keys:
-                for pid, h2 in data2.items():
-                    h1 = data1.get(pid)
-                    if not h1:
-                        continue
-                    v2 = (h2.get("Сила", 0) + h2.get("Защита", 0) + h2.get("Ловкость", 0) +
-                          h2.get("Мастерство", 0) + h2.get("Живучесть", 0))
-                    v1 = (h1.get("Сила", 0) + h1.get("Защита", 0) + h1.get("Ловкость", 0) +
-                          h1.get("Мастерство", 0) + h1.get("Живучесть", 0))
-                    diff = v2 - v1
-                    if diff <= 0:
-                        continue
-                    name = h2.get("Имя")
-                    lvl = h2.get("Уровень")
-                    tup = (pid, name, lvl, diff, None)
+			data1 = snapshot(f_prev)
+			data2 = snapshot(f_curr)
 
-                    cur = best_all.get(pid)
-                    if (cur is None) or (diff > cur[3]):
-                        best_all[pid] = tup
-                    if isinstance(lvl, int):
-                        curL = best_by_level[lvl].get(pid)
-                        if (curL is None) or (diff > curL[3]):
-                            best_by_level[lvl][pid] = tup
-            else:
-                key = pkey
-                for pid, h2 in data2.items():
-                    h1 = data1.get(pid)
-                    if not h1:
-                        continue
-                    v2 = h2.get(key, 0)
-                    v1 = h1.get(key, 0)
-                    diff = v2 - v1
-                    if diff <= 0:
-                        continue
-                    name = h2.get("Имя")
-                    lvl = h2.get("Уровень")
-                    tup = (pid, name, lvl, diff, None)
+			if pkey == stat_keys:
+				for pid, h2 in data2.items():
+					h1 = data1.get(pid)
+					if not h1:
+						continue
+					v2 = (h2.get("Сила", 0) + h2.get("Защита", 0) + h2.get("Ловкость", 0) +
+						  h2.get("Мастерство", 0) + h2.get("Живучесть", 0))
+					v1 = (h1.get("Сила", 0) + h1.get("Защита", 0) + h1.get("Ловкость", 0) +
+						  h1.get("Мастерство", 0) + h1.get("Живучесть", 0))
+					diff = v2 - v1
+					if diff <= 0:
+						continue
+					name = h2.get("Имя")
+					lvl = h2.get("Уровень")
+					tup = (pid, name, lvl, diff, None)
 
-                    cur = best_all.get(pid)
-                    if (cur is None) or (diff > cur[3]):
-                        best_all[pid] = tup
-                    if isinstance(lvl, int):
-                        curL = best_by_level[lvl].get(pid)
-                        if (curL is None) or (diff > curL[3]):
-                            best_by_level[lvl][pid] = tup
+					cur = best_all.get(pid)
+					if (cur is None) or (diff > cur[3]):
+						best_all[pid] = tup
+					if isinstance(lvl, int):
+						curL = best_by_level[lvl].get(pid)
+						if (curL is None) or (diff > curL[3]):
+							best_by_level[lvl][pid] = tup
+			else:
+				key = pkey
+				for pid, h2 in data2.items():
+					h1 = data1.get(pid)
+					if not h1:
+						continue
+					v2 = h2.get(key, 0)
+					v1 = h1.get(key, 0)
+					diff = v2 - v1
+					if diff <= 0:
+						continue
+					name = h2.get("Имя")
+					lvl = h2.get("Уровень")
+					tup = (pid, name, lvl, diff, None)
 
-        merged_all = sorted(best_all.values(), key=lambda t: t[3], reverse=True)[:MAX_BEST_PER_LIST]
-        BEST_CACHE[(param, None)] = merged_all
+					cur = best_all.get(pid)
+					if (cur is None) or (diff > cur[3]):
+						best_all[pid] = tup
+					if isinstance(lvl, int):
+						curL = best_by_level[lvl].get(pid)
+						if (curL is None) or (diff > curL[3]):
+							best_by_level[lvl][pid] = tup
 
-        for lvl in sorted(ALL_LEVELS):
-            vals = best_by_level.get(lvl)
-            if not vals:
-                BEST_CACHE[(param, lvl)] = []
-                continue
-            BEST_CACHE[(param, lvl)] = sorted(vals.values(), key=lambda t: t[3], reverse=True)[:MAX_BEST_PER_LIST]
+		merged_all = sorted(best_all.values(), key=lambda t: t[3], reverse=True)[:MAX_BEST_PER_LIST]
+		BEST_CACHE[(param, None)] = merged_all
 
-    # snapshot.cache_clear()
+		for lvl in sorted(ALL_LEVELS):
+			vals = best_by_level.get(lvl)
+			if not vals:
+				BEST_CACHE[(param, lvl)] = []
+				continue
+			BEST_CACHE[(param, lvl)] = sorted(vals.values(), key=lambda t: t[3], reverse=True)[:MAX_BEST_PER_LIST]
+
+	# snapshot.cache_clear()
 
 
 

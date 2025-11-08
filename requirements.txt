@@ -6,3 +6,5 @@ aiohttp
 requests
 aiohttp
 nest_asyncio
+flask-compress
+orjson

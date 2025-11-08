@@ -1,18 +1,33 @@
-import logging, os, sys, json, glob, re, gzip
+import logging, os, sys, json, glob, re, gzip, heapq, orjson
 import collections
 
 from pprint import pprint
 from flask import Flask, render_template, request, abort, send_from_directory
+from flask_compress import Compress
 from datetime import datetime, timedelta
 from operator import itemgetter
 from collections import defaultdict
 from functools import lru_cache
 
 
+FILENAME_RE = re.compile(r"heroes_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})")
+BOT_RE = re.compile(r"(?:bot|crawler|spider|scraper|curl|wget|python-requests|httpclient)", re.I)
+
+@lru_cache(maxsize=2048)
+def _dt(filename: str):
+	m = FILENAME_RE.search(filename)
+	if not m:
+		return None
+	return datetime.strptime("-".join(m.groups()), "%Y-%m-%d-%H-%M-%S")
+
+
 app = Flask(__name__)
+Compress(app)
+
 BEST_CACHE = {}
-ALL_LEVELS = set()
 JSON_DIR = "data"
+BEST_LAST_FILE = None
+
 BEST_WINDOW_DAYS   = int(os.environ.get("BEST_WINDOW_DAYS", "30"))
 MAX_BEST_PER_LIST  = int(os.environ.get("MAX_BEST_PER_LIST", "1000"))
 BEST_MAX_GAP_HOURS = int(os.environ.get("BEST_MAX_GAP_HOURS", "26"))
@@ -22,8 +37,7 @@ def block_bots_on_heavy():
 	if request.path in ("/robots.txt",) or request.path.startswith("/static/"):
 		return
 	ua = (request.headers.get("User-Agent") or "").lower()
-	bot_pattern = re.compile(r"(?:bot|crawler|spider|scraper|curl|wget|python-requests|httpclient)", re.I)
-	if bot_pattern.search(ua):
+	if BOT_RE.search(ua):
 		if request.path == "/":
 			abort(403)
 
@@ -47,10 +61,10 @@ param_options = [
 
 def load_json_any(path: str):
 	if path.endswith(".gz"):
-		with gzip.open(path, "rt", encoding="utf-8") as f:
-			return json.load(f)
-	with open(path, "r", encoding="utf-8") as f:
-		return json.load(f)
+		with gzip.open(path, "rb") as f:
+			return orjson.loads(f.read())
+	with open(path, "rb") as f:
+		return orjson.loads(f.read())
 
 @lru_cache(maxsize=2)
 def snapshot(filename: str):
@@ -59,15 +73,11 @@ def snapshot(filename: str):
 
 def list_json_files():
 	files = [f for f in os.listdir(JSON_DIR) if f.startswith("heroes_") and f.endswith((".json", ".json.gz"))]
-	return sorted(files, key=extract_datetime_from_filename, reverse=True)
+	return sorted(files, key=_dt, reverse=True)
 
 
 def extract_datetime_from_filename(filename):
-	match = re.search(r"heroes_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})", filename)
-	if match:
-		dt = datetime.strptime("-".join(match.groups()), "%Y-%m-%d-%H-%M-%S")
-		return dt
-	return None
+	return _dt(filename)
 
 
 def build_rating(data, param, previous_data=None):
@@ -110,8 +120,10 @@ def build_rating(data, param, previous_data=None):
 
 			rating.append((pid, name, level, value, delta))
 
-	rating.sort(key=lambda x: x[3], reverse=1)
-	rating = rating[:1000]
+	#~ rating.sort(key=lambda x: x[3], reverse=1)
+	#~ rating = rating[:1000]
+	rating = heapq.nlargest(MAX_BEST_PER_LIST, rating, key=lambda x: x[3])
+
 	return rating
 
 
@@ -147,63 +159,45 @@ def build_growth_rating(data1, data2, param):
 					extra = round(diff / fights)
 
 		rating.append((pid, name, level, diff, extra))
-	rating.sort(key=lambda x: x[3], reverse=1)
-	rating = rating[:1000]
+	#~ rating.sort(key=lambda x: x[3], reverse=1)
+	#~ rating = rating[:1000]
+
+	rating = heapq.nlargest(MAX_BEST_PER_LIST, rating, key=lambda x: x[3])
+
 	return rating
 
 def get_level_ratings(data):
-	from collections import defaultdict
-	grouped = defaultdict(list)
+	grouped = defaultdict(lambda: {"players": [], "sum": [0,0,0,0,0]})
+	S,Z,L,M,V = 0,1,2,3,4
+
 	for hero in data.values():
-		if "Уровень" in hero and "Сила" in hero:
-			grouped[hero["Уровень"]].append(hero)
+		lvl = hero.get("Уровень")
+		if not isinstance(lvl, int): continue
+		s = hero.get("Сила",0); z = hero.get("Защита",0); l = hero.get("Ловкость",0)
+		m = hero.get("Мастерство",0); v = hero.get("Живучесть",0)
+		g = grouped[lvl]; g["players"].append((s,z,l,m,v, hero.get("ID") or hero.get("id"), hero.get("Имя","Безымянный")))
+		sm = g["sum"]; sm[S]+=s; sm[Z]+=z; sm[L]+=l; sm[M]+=m; sm[V]+=v
 
-	for level in grouped:
-		grouped[level].sort(
-			key=lambda h: (
-				h.get("Сила", 0),
-				h.get("Защита", 0),
-				h.get("Ловкость", 0),
-				h.get("Мастерство", 0),
-				h.get("Живучесть", 0)
-			),
-			reverse=True
-		)
-
-	sorted_levels = sorted(grouped.keys(), reverse=True)
-
+	if not grouped: return []
+	levels = sorted(grouped.keys(), reverse=True)
 	result = []
-	for level in sorted_levels:
-		players = grouped[level]
-		n = len(players) or 1
-		avg_strength = sum(p.get("Сила", 0) for p in players) / n
-		avg_defense  = sum(p.get("Защита", 0) for p in players) / n
-		avg_dex      = sum(p.get("Ловкость", 0) for p in players) / n
-		avg_mastery  = sum(p.get("Мастерство", 0) for p in players) / n
-		avg_vit      = sum(p.get("Живучесть", 0) for p in players) / n
-
+	for lvl in levels:
+		g = grouped[lvl]; players = g["players"]
+		players.sort(key=lambda t:(t[0],t[1],t[2],t[3],t[4]), reverse=True)
+		n = len(players) or 1; sm = g["sum"]
 		result.append({
-			"level": level,
+			"level": lvl,
 			"avg": {
-				"strength": avg_strength,
-				"defense": avg_defense,
-				"dexterity": avg_dex,
-				"mastery": avg_mastery,
-				"vitality": avg_vit,
+				"strength":  sm[S]/n,
+				"defense":   sm[Z]/n,
+				"dexterity": sm[L]/n,
+				"mastery":   sm[M]/n,
+				"vitality":  sm[V]/n,
 			},
-			"players": [
-				{
-					"ID": hero.get("ID") or hero.get("id"),
-					"name": hero.get("Имя", "Безымянный"),
-					"level": level,
-					"strength": hero.get("Сила", 0),
-					"defense": hero.get("Защита", 0),
-					"dexterity": hero.get("Ловкость", 0),
-					"mastery": hero.get("Мастерство", 0),
-					"vitality": hero.get("Живучесть", 0)
-				}
-				for hero in players
-			]
+			"players": [{
+				"ID": pid, "name": name, "level": lvl,
+				"strength": s, "defense": z, "dexterity": l, "mastery": m, "vitality": v
+			} for (s,z,l,m,v,pid,name) in players]
 		})
 	return result
 
@@ -325,27 +319,25 @@ def _param_key_for_best(selected_param, stat_keys):
 
 def precompute_best_cache(json_files, extract_datetime_from_filename, param_options, stat_keys):
 	BEST_CACHE.clear()
-	global ALL_LEVELS
 
-	files_sorted = sorted(json_files, key=extract_datetime_from_filename)
-	if len(files_sorted) < 2:
-		ALL_LEVELS = set()
-		return
+	pairs = [(f, _dt(f)) for f in json_files]
+	pairs = [p for p in pairs if p[1] is not None]
+	pairs.sort(key=lambda x: x[1])
 
-	latest_dt = extract_datetime_from_filename(files_sorted[-1])
+	latest_dt = pairs[-1][1]
 	cutoff_dt = latest_dt - timedelta(days=BEST_WINDOW_DAYS)
-	window_files = [f for f in files_sorted if extract_datetime_from_filename(f) >= cutoff_dt]
-	if len(window_files) < 2:
-		window_files = files_sorted
+
+	window_pairs = [p for p in pairs if p[1] >= cutoff_dt]
+	if len(window_pairs) < 2:
+		window_pairs = pairs
 
 	levels = set()
-	for f in window_files:
+	for f, _ in window_pairs:
 		snap = snapshot(f)
 		for h in snap.values():
 			lvl = h.get("Уровень")
 			if isinstance(lvl, int):
 				levels.add(lvl)
-	ALL_LEVELS = levels
 
 	def _param_key_for_best(p):
 		return stat_keys if p == "Сумма статов" else p
@@ -361,11 +353,7 @@ def precompute_best_cache(json_files, extract_datetime_from_filename, param_opti
 		best_all = {}
 		best_by_level = defaultdict(dict)
 
-		for f_prev, f_curr in zip(window_files[:-1], window_files[1:]):
-			dt_prev = extract_datetime_from_filename(f_prev)
-			dt_curr = extract_datetime_from_filename(f_curr)
-			if not dt_prev or not dt_curr:
-				continue
+		for (f_prev, dt_prev), (f_curr, dt_curr) in zip(window_pairs[:-1], window_pairs[1:]):
 			gap_h = (dt_curr - dt_prev).total_seconds() / 3600.0
 			if gap_h > BEST_MAX_GAP_HOURS:
 				continue
@@ -419,15 +407,18 @@ def precompute_best_cache(json_files, extract_datetime_from_filename, param_opti
 						if (curL is None) or (diff > curL[3]):
 							best_by_level[lvl][pid] = tup
 
-		merged_all = sorted(best_all.values(), key=lambda t: t[3], reverse=True)[:MAX_BEST_PER_LIST]
+		#~ merged_all = sorted(best_all.values(), key=lambda t: t[3], reverse=True)[:MAX_BEST_PER_LIST]
+		merged_all = heapq.nlargest(MAX_BEST_PER_LIST, best_all.values(), key=lambda t: t[3])
 		BEST_CACHE[(param, None)] = merged_all
 
-		for lvl in sorted(ALL_LEVELS):
+
+		for lvl in sorted(levels):
 			vals = best_by_level.get(lvl)
 			if not vals:
 				BEST_CACHE[(param, lvl)] = []
 				continue
-			BEST_CACHE[(param, lvl)] = sorted(vals.values(), key=lambda t: t[3], reverse=True)[:MAX_BEST_PER_LIST]
+			#~ BEST_CACHE[(param, lvl)] = sorted(vals.values(), key=lambda t: t[3], reverse=True)[:MAX_BEST_PER_LIST]
+			BEST_CACHE[(param, lvl)] = heapq.nlargest(MAX_BEST_PER_LIST, vals.values(), key=lambda t: t[3])
 
 	# snapshot.cache_clear()
 
@@ -440,7 +431,11 @@ for f in json_files[:2]:
 	except Exception as e:
 		app.logger.warning(f"Warmup failed for {f}: {e}")
 
-precompute_best_cache(json_files, extract_datetime_from_filename, param_options, stat_keys)
+new_last = json_files[0] if json_files else None
+if new_last != BEST_LAST_FILE:
+	precompute_best_cache(json_files, extract_datetime_from_filename, param_options, stat_keys)
+	BEST_LAST_FILE = new_last
+
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -454,7 +449,11 @@ def index():
 	filename_display = ""
 	diff_hours = None
 	selected_level = request.form.get("level", "Все")
-	files_display = [(f, extract_datetime_from_filename(f).strftime("%d.%m.%Y %H:%M")) for f in json_files]
+	files_display = []
+	for f in json_files:
+		dt = _dt(f)
+		if dt:
+			files_display.append((f, dt.strftime("%d.%m.%Y %H:%M")))
 
 	mode = request.form.get("mode") or "Общий"
 
@@ -484,20 +483,37 @@ def index():
 	if mode == "Общий":
 		selected_file = request.form.get("file", selected_file)
 
-		data = snapshot(selected_file) if selected_file else {}
+		data = {}
+		if selected_file:
+			try:
+				data = snapshot(selected_file)
+			except FileNotFoundError:
+				app.logger.warning(f"Файл снапшота не найден: {selected_file}, пропускаем.")
+				selected_file = None
 
-		file_index = json_files.index(selected_file)
-		prev_name = json_files[file_index + 1] if file_index + 1 < len(json_files) else None
-		prev_snap = snapshot(prev_name) if prev_name else None
+		prev_name = None
+		prev_snap = None
+		file_index = None
+		if selected_file and selected_file in json_files:
+			file_index = json_files.index(selected_file)
+			if file_index + 1 < len(json_files):
+				prev_name = json_files[file_index + 1]
+				try:
+					prev_snap = snapshot(prev_name)
+				except FileNotFoundError:
+					app.logger.warning(f"Файл предыдущего снапшота не найден: {prev_name}")
+					prev_snap = None
 
 		if selected_param == "По уровню":
 			rating = []
+
 			level_ratings = get_level_ratings(data)
+
 			try:
 				files_sorted = sorted(json_files, key=extract_datetime_from_filename)
 				idx = files_sorted.index(selected_file)
 			except Exception:
-				files_sorted = json_files[:]  # fallback
+				files_sorted = json_files[:]
 				idx = 0
 
 			prev_name = files_sorted[idx - 1] if idx - 1 >= 0 else None
@@ -527,13 +543,13 @@ def index():
 
 			rating = build_rating(data, selected_param, prev_snap)
 
-		dt = extract_datetime_from_filename(selected_file)
+		dt = extract_datetime_from_filename(selected_file) if selected_file else None
 		diff_hours = None
 		if dt and prev_name:
-			prev_dt = extract_datetime_from_filename(json_files[file_index + 1])
+			prev_dt = extract_datetime_from_filename(prev_name)
 			if prev_dt:
 				diff_hours = round((dt - prev_dt).total_seconds()/3600, 1)
-		filename_display = dt.strftime("%d.%m.%Y %H:%M") if dt else selected_file
+		filename_display = dt.strftime("%d.%m.%Y %H:%M") if dt else (selected_file or "")
 
 	elif mode == "Прирост":
 		file1 = request.form.get("file1")
@@ -545,8 +561,12 @@ def index():
 			file1 = file2 = json_files[0]
 
 		if file1 and file2:
-			data1 = snapshot(file1)
-			data2 = snapshot(file2)
+			try:
+				data1 = snapshot(file1)
+				data2 = snapshot(file2)
+			except FileNotFoundError as e:
+				app.logger.warning(f"Один из файлов для прироста не найден: {e}")
+				data1 = data2 = {}
 
 			if selected_level and selected_level != "Все":
 				selected_level = int(selected_level)
@@ -563,6 +583,11 @@ def index():
 			if dt1 and dt2:
 				diff_hours = round((dt2 - dt1).total_seconds()/3600, 1)
 			filename_display = f"{dt1.strftime('%d.%m.%Y %H:%M')} → {dt2.strftime('%d.%m.%Y %H:%M')}" if dt1 and dt2 else ""
+
+		if not data1 or not data2:
+			rating = []
+			filename_display = "Один из выбранных файлов недоступен"
+
 	elif mode == "Лучшие (приросты)":
 		lvl_key = None if (not selected_level or selected_level == "Все") else int(selected_level)
 		best_list = BEST_CACHE.get((selected_param, lvl_key), [])

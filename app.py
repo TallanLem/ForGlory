@@ -1,53 +1,49 @@
-import logging, os, sys, json, glob, re, gzip, heapq, orjson
-import collections
 
-from pprint import pprint
-from flask import Flask, render_template, request, abort, send_from_directory
-from flask_compress import Compress
-from datetime import datetime, timedelta
-from operator import itemgetter
-from collections import defaultdict
-from functools import lru_cache
-
-
-FILENAME_RE = re.compile(r"heroes_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})")
-BOT_RE = re.compile(r"(?:bot|crawler|spider|scraper|curl|wget|python-requests|httpclient)", re.I)
-
-@lru_cache(maxsize=2048)
-def _dt(filename: str):
-	m = FILENAME_RE.search(filename)
-	if not m:
-		return None
-	return datetime.strptime("-".join(m.groups()), "%Y-%m-%d-%H-%M-%S")
-
+import os, re, sqlite3, logging
+from datetime import datetime
+from flask import Flask, render_template, request, jsonify, g
+try:
+	from flask_compress import Compress
+except Exception:
+	Compress = None
 
 app = Flask(__name__)
-Compress(app)
+if Compress:
+	Compress(app)
 
-BEST_CACHE = {}
-JSON_DIR = "data"
-BEST_LAST_FILE = None
+@app.template_global()
+def extract_datetime_from_filename(filename: str) -> datetime:
+	"""
+	heroes_2026-01-08_23-33-22.json.gz
+	heroes_2026-01-08.json.gz (если когда-то появится)
+	"""
+	m = re.search(r'(\d{4}-\d{2}-\d{2})(?:[_T](\d{2})-(\d{2})-(\d{2}))?', filename)
+	if not m:
+		return datetime.min
 
-BEST_WINDOW_DAYS   = int(os.environ.get("BEST_WINDOW_DAYS", "30"))
-MAX_BEST_PER_LIST  = int(os.environ.get("MAX_BEST_PER_LIST", "1000"))
-BEST_MAX_GAP_HOURS = int(os.environ.get("BEST_MAX_GAP_HOURS", "26"))
+	day = m.group(1)
+	hh, mm, ss = m.group(2), m.group(3), m.group(4)
 
-@app.before_request
-def block_bots_on_heavy():
-	if request.path in ("/robots.txt",) or request.path.startswith("/static/"):
-		return
-	ua = (request.headers.get("User-Agent") or "").lower()
-	if BOT_RE.search(ua):
-		if request.path == "/":
-			abort(403)
+	if hh and mm and ss:
+		return datetime.strptime(f"{day} {hh}:{mm}:{ss}", "%Y-%m-%d %H:%M:%S")
+	return datetime.strptime(day, "%Y-%m-%d")
 
-@app.route('/robots.txt')
-def robots_txt():
-	here = os.path.dirname(os.path.abspath(__file__))
-	return send_from_directory(here, 'robots.txt', mimetype='text/plain')
+# allow enumerate(...) in Jinja templates
+app.jinja_env.globals.update(enumerate=enumerate)
 
+logging.basicConfig(level=logging.INFO)
 
-logging.basicConfig(level=logging.DEBUG)
+# -----------------------------
+# Config
+# -----------------------------
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+DB_PATH = os.environ.get("DB_PATH", os.path.join(DATA_DIR, "db", "ratings.sqlite"))
+
+MAX_BEST_PER_LIST = int(os.environ.get("MAX_BEST_PER_LIST", "1000"))
+LEVEL_PAGE_SIZE = int(os.environ.get("LEVEL_PAGE_SIZE", "100"))
+
+# Snapshot filename format: heroes_YYYY-MM-DD_HH-MM-SS.json(.gz)
+DATETIME_RE = re.compile(r"heroes_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})")
 
 stat_keys = ["Сила", "Защита", "Ловкость", "Мастерство", "Живучесть"]
 
@@ -59,578 +55,579 @@ param_options = [
 	"Братства по славе", "Братства по статам", "Кланы по славе", "Кланы по статам"
 ]
 
-def load_json_any(path: str):
-	if path.endswith(".gz"):
-		with gzip.open(path, "rb") as f:
-			return orjson.loads(f.read())
-	with open(path, "rb") as f:
-		return orjson.loads(f.read())
-
-@lru_cache(maxsize=2)
-def snapshot(filename: str):
-	full_path = os.path.join(JSON_DIR, filename)
-	return load_json_any(full_path)
-
-def list_json_files():
-	files = [f for f in os.listdir(JSON_DIR) if f.startswith("heroes_") and f.endswith((".json", ".json.gz"))]
-	return sorted(files, key=_dt, reverse=True)
-
-
-def extract_datetime_from_filename(filename):
-	return _dt(filename)
-
-
-def build_rating(data, param, previous_data=None):
-	if param == "Кланы по славе":
-		return build_group_rating(data, "Клан", "Слава", previous_data)
-	elif param == "Братства по славе":
-		return build_group_rating(data, "Братство", "Слава", previous_data)
-	elif param == "Кланы по статам":
-		return build_group_rating(data, "Клан", stat_keys, previous_data)
-	elif param == "Братства по статам":
-		return build_group_rating(data, "Братство", stat_keys, previous_data)
-	elif param == "Сумма статов":
-		param = stat_keys
-
-	rating = []
-	for pid, hero in data.items():
-		if hero.get("Имя", "").lower():
-			if isinstance(param, str):
-				value = hero.get(param, 0)
-			elif isinstance(param, list):
-				value = sum(hero.get(p, 0) for p in param)
-			else:
-				value = 0
-
-			name = hero.get("Имя", "Безымянный")
-			level = hero.get("Уровень", "?")
-			delta = None
-			if previous_data and pid in previous_data:
-				if isinstance(param, str):
-					value_old = previous_data[pid].get(param, 0)
-				elif isinstance(param, list):
-					value_old = sum(previous_data[pid].get(p, 0) for p in param)
-				else:
-					value_old = 0
-
-				if value_old:
-					delta = value - value_old
-				else:
-					delta = 0
-
-			rating.append((pid, name, level, value, delta))
-
-	#~ rating.sort(key=lambda x: x[3], reverse=1)
-	#~ rating = rating[:1000]
-	rating = heapq.nlargest(MAX_BEST_PER_LIST, rating, key=lambda x: x[3])
-
-	return rating
-
-
-def build_growth_rating(data1, data2, param):
-	rating = []
-	for pid, hero2 in data2.items():
-		hero1 = data1.get(pid, {})
-		name = hero2.get("Имя", "Безымянный")
-		level = hero2.get("Уровень", "?")
-		if isinstance(param, str):
-			v2 = hero2.get(param, 0)
-			v1 = hero1.get(param, 0)
-		elif isinstance(param, list):
-			v2 = sum(hero2.get(p, 0) for p in param)
-			v1 = sum(hero1.get(p, 0) for p in param)
-		else:
-			v2 = v1 = 0
-
-		diff = v2 - v1
-		extra = None
-		if isinstance(param, str):
-			if param.startswith("Награбил"):
-				victories2 = hero2.get("Побед", 0)
-				victories1 = hero1.get("Побед", 0)
-				fights = victories2 - victories1
-				if fights > 0:
-					extra = round(diff / fights)
-			elif param.startswith("Потерял"):
-				defeats2 = hero2.get("Поражений", 0)
-				defeats1 = hero1.get("Поражений", 0)
-				fights = defeats2 - defeats1
-				if fights > 0:
-					extra = round(diff / fights)
-
-		rating.append((pid, name, level, diff, extra))
-	#~ rating.sort(key=lambda x: x[3], reverse=1)
-	#~ rating = rating[:1000]
-
-	rating = heapq.nlargest(MAX_BEST_PER_LIST, rating, key=lambda x: x[3])
-
-	return rating
-
-def get_level_ratings(data):
-	grouped = defaultdict(lambda: {"players": [], "sum": [0,0,0,0,0]})
-	S,Z,L,M,V = 0,1,2,3,4
-
-	for hero in data.values():
-		lvl = hero.get("Уровень")
-		if not isinstance(lvl, int): continue
-		s = hero.get("Сила",0); z = hero.get("Защита",0); l = hero.get("Ловкость",0)
-		m = hero.get("Мастерство",0); v = hero.get("Живучесть",0)
-		g = grouped[lvl]; g["players"].append((s,z,l,m,v, hero.get("ID") or hero.get("id"), hero.get("Имя","Безымянный")))
-		sm = g["sum"]; sm[S]+=s; sm[Z]+=z; sm[L]+=l; sm[M]+=m; sm[V]+=v
-
-	if not grouped: return []
-	levels = sorted(grouped.keys(), reverse=True)
-	result = []
-	for lvl in levels:
-		g = grouped[lvl]; players = g["players"]
-		players.sort(key=lambda t:(t[0],t[1],t[2],t[3],t[4]), reverse=True)
-		n = len(players) or 1; sm = g["sum"]
-		result.append({
-			"level": lvl,
-			"avg": {
-				"strength":  sm[S]/n,
-				"defense":   sm[Z]/n,
-				"dexterity": sm[L]/n,
-				"mastery":   sm[M]/n,
-				"vitality":  sm[V]/n,
-			},
-			"players": [{
-				"ID": pid, "name": name, "level": lvl,
-				"strength": s, "defense": z, "dexterity": l, "mastery": m, "vitality": v
-			} for (s,z,l,m,v,pid,name) in players]
-		})
-	return result
-
-
-
-def build_group_rating(data, group_key, param, previous_data=None):
-	id_key = "clan_id" if group_key == "Клан" else (
-		"brotherhood_id" if group_key == "Братство" else None
-	)
-
-	def is_id_mode(dataset):
-		return any(id_key in h for h in dataset.values())
-
-	use_id_mode = is_id_mode(data)
-
-	def get_value(hero):
-		if isinstance(param, str):
-			return hero.get(param, 0)
-		elif isinstance(param, list):
-			return sum(hero.get(p, 0) for p in param)
-		return 0
-
-	def build_groups(dataset, id_mode):
-		groups = {}
-		for hero in dataset.values():
-			if id_mode:
-				group_id = hero.get(id_key, 0)
-				group_name = (hero.get(group_key, "") or "").strip()
-				if not (group_id and group_name):
-					continue
-				key = group_id
-				if key not in groups:
-					groups[key] = {"name": group_name, "score": 0, "members": []}
-			else:
-				group_name = (hero.get(group_key, "") or "").strip()
-				if not group_name or "не состоит" in group_name.lower():
-					continue
-				key = group_name
-				if key not in groups:
-					groups[key] = {"name": group_name, "score": 0, "members": []}
-
-			value = get_value(hero)
-			groups[key]["score"] += value
-			groups[key]["members"].append({
-				"ID":      hero.get("ID") or hero.get("id") or hero.get("pid"),
-				"Имя":     hero.get("Имя", "Безымянный"),
-				"Уровень": hero.get("Уровень", "?"),
-				"value":   value,
-			})
-
-		for g in groups.values():
-			g["members"].sort(key=lambda h: h["value"], reverse=True)
-			for i, h in enumerate(g["members"], 1):
-				h["_rank"] = i
-
-		return groups
-
-	current = build_groups(data, use_id_mode)
-	previous = build_groups(previous_data, use_id_mode) if previous_data else {}
-
-	prev_value_by_pid = {}
-	if previous:
-		for g in previous.values():
-			for h in g.get("members", []):
-				pid = h.get("ID") or h.get("id") or h.get("pid")
-				if pid is not None:
-					prev_value_by_pid[pid] = h.get("value", 0)
-
-	all_keys = set(current) | set(previous)
-	result = []
-	for key in all_keys:
-		curr_group = current.get(key, {})
-		prev_group = previous.get(key, {})
-
-		name = curr_group.get("name") or prev_group.get("name") or str(key)
-		score_now = curr_group.get("score", 0)
-		score_prev = prev_group.get("score", 0)
-
-		members_now = curr_group.get("members", [])
-		for h in members_now:
-			pid = h.get("ID") or h.get("id") or h.get("pid")
-			if pid is not None and pid in prev_value_by_pid:
-				h["delta"] = h.get("value", 0) - prev_value_by_pid[pid]
-			else:
-				h["delta"] = None
-
-		count_now = len(members_now)
-		count_prev = len(prev_group.get("members", []))
-
-		result.append({
-			"name": name,
-			"score": score_now,
-			"delta": score_now - score_prev,
-			"count": count_now,
-			"count_delta": count_now - count_prev,
-			"members": members_now,
-		})
-
-	result.sort(key=itemgetter("score"), reverse=True)
-	return result
-
-
-def _collect_all_levels(preloaded_data):
-	levels = set()
-	for snap in preloaded_data.values():
-		for h in snap.values():
-			lvl = h.get("Уровень")
-			if isinstance(lvl, int):
-				levels.add(lvl)
-	return levels
-
-def _filter_by_level(snapshot, level_int_or_none):
-	if not level_int_or_none:
-		return snapshot
-	return {pid: h for pid, h in snapshot.items() if h.get("Уровень") == level_int_or_none}
-
-def _param_key_for_best(selected_param, stat_keys):
-	return stat_keys if selected_param == "Сумма статов" else selected_param
-
-def precompute_best_cache(json_files, extract_datetime_from_filename, param_options, stat_keys):
-	BEST_CACHE.clear()
-
-	pairs = [(f, _dt(f)) for f in json_files]
-	pairs = [p for p in pairs if p[1] is not None]
-	pairs.sort(key=lambda x: x[1])
-
-	latest_dt = pairs[-1][1]
-	cutoff_dt = latest_dt - timedelta(days=BEST_WINDOW_DAYS)
-
-	window_pairs = [p for p in pairs if p[1] >= cutoff_dt]
-	if len(window_pairs) < 2:
-		window_pairs = pairs
-
-	levels = set()
-	for f, _ in window_pairs:
-		snap = snapshot(f)
-		for h in snap.values():
-			lvl = h.get("Уровень")
-			if isinstance(lvl, int):
-				levels.add(lvl)
-
-	def _param_key_for_best(p):
-		return stat_keys if p == "Сумма статов" else p
-
-	best_params = [
-		p for p in param_options
-		if p != "По уровню" and not p.startswith("Кланы") and not p.startswith("Братства")
-	]
-
-	for param in best_params:
-		pkey = _param_key_for_best(param)
-
-		best_all = {}
-		best_by_level = defaultdict(dict)
-
-		for (f_prev, dt_prev), (f_curr, dt_curr) in zip(window_pairs[:-1], window_pairs[1:]):
-			gap_h = (dt_curr - dt_prev).total_seconds() / 3600.0
-			if gap_h > BEST_MAX_GAP_HOURS:
-				continue
-
-			data1 = snapshot(f_prev)
-			data2 = snapshot(f_curr)
-
-			if pkey == stat_keys:
-				for pid, h2 in data2.items():
-					h1 = data1.get(pid)
-					if not h1:
-						continue
-					v2 = (h2.get("Сила", 0) + h2.get("Защита", 0) + h2.get("Ловкость", 0) +
-						  h2.get("Мастерство", 0) + h2.get("Живучесть", 0))
-					v1 = (h1.get("Сила", 0) + h1.get("Защита", 0) + h1.get("Ловкость", 0) +
-						  h1.get("Мастерство", 0) + h1.get("Живучесть", 0))
-					diff = v2 - v1
-					if diff <= 0:
-						continue
-					name = h2.get("Имя")
-					lvl = h2.get("Уровень")
-					tup = (pid, name, lvl, diff, None)
-
-					cur = best_all.get(pid)
-					if (cur is None) or (diff > cur[3]):
-						best_all[pid] = tup
-					if isinstance(lvl, int):
-						curL = best_by_level[lvl].get(pid)
-						if (curL is None) or (diff > curL[3]):
-							best_by_level[lvl][pid] = tup
-			else:
-				key = pkey
-				for pid, h2 in data2.items():
-					h1 = data1.get(pid)
-					if not h1:
-						continue
-					v2 = h2.get(key, 0)
-					v1 = h1.get(key, 0)
-					diff = v2 - v1
-					if diff <= 0:
-						continue
-					name = h2.get("Имя")
-					lvl = h2.get("Уровень")
-					tup = (pid, name, lvl, diff, None)
-
-					cur = best_all.get(pid)
-					if (cur is None) or (diff > cur[3]):
-						best_all[pid] = tup
-					if isinstance(lvl, int):
-						curL = best_by_level[lvl].get(pid)
-						if (curL is None) or (diff > curL[3]):
-							best_by_level[lvl][pid] = tup
-
-		#~ merged_all = sorted(best_all.values(), key=lambda t: t[3], reverse=True)[:MAX_BEST_PER_LIST]
-		merged_all = heapq.nlargest(MAX_BEST_PER_LIST, best_all.values(), key=lambda t: t[3])
-		BEST_CACHE[(param, None)] = merged_all
-
-
-		for lvl in sorted(levels):
-			vals = best_by_level.get(lvl)
-			if not vals:
-				BEST_CACHE[(param, lvl)] = []
-				continue
-			#~ BEST_CACHE[(param, lvl)] = sorted(vals.values(), key=lambda t: t[3], reverse=True)[:MAX_BEST_PER_LIST]
-			BEST_CACHE[(param, lvl)] = heapq.nlargest(MAX_BEST_PER_LIST, vals.values(), key=lambda t: t[3])
-
-	# snapshot.cache_clear()
-
-
-
-json_files = list_json_files()
-for f in json_files[:2]:
+PARAM_EXCLUDE_BY_MODE = {
+    "Прирост": {
+        "По уровню",
+        "Кланы по славе",
+        "Кланы по статам",
+        "Братства по славе",
+        "Братства по статам",
+    },
+    "Лучшие (приросты)": {
+        "По уровню",
+        "Кланы по славе",
+        "Кланы по статам",
+        "Братства по славе",
+        "Братства по статам",
+    },
+}
+
+def params_for_mode(mode: str, all_params: list[str]) -> list[str]:
+    banned = PARAM_EXCLUDE_BY_MODE.get(mode, set())
+    return [p for p in all_params if p not in banned]
+
+# -----------------------------
+# DB helpers
+# -----------------------------
+def _db_available() -> bool:
+	return os.path.exists(DB_PATH)
+
+def get_db() -> sqlite3.Connection:
+	if "db" not in g:
+		conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+		conn.row_factory = sqlite3.Row
+		g.db = conn
+	return g.db
+
+@app.teardown_appcontext
+def close_db(_exc):
+	conn = g.pop("db", None)
+	if conn is not None:
+		conn.close()
+
+def _dt_from_filename(name: str):
+	m = DATETIME_RE.search(name or "")
+	if not m:
+		return None
+	date_s = m.group(1)
+	time_s = m.group(2).replace("-", ":")
 	try:
-		snapshot(f)
-	except Exception as e:
-		app.logger.warning(f"Warmup failed for {f}: {e}")
+		return datetime.strptime(f"{date_s} {time_s}", "%Y-%m-%d %H:%M:%S")
+	except ValueError:
+		return None
 
-new_last = json_files[0] if json_files else None
-if new_last != BEST_LAST_FILE:
-	precompute_best_cache(json_files, extract_datetime_from_filename, param_options, stat_keys)
-	BEST_LAST_FILE = new_last
+#~ @app.template_filter("extract_datetime_from_filename")
+#~ def extract_datetime_from_filename(name: str):
+	#~ dt = _dt_from_filename(name)
+	#~ return dt or datetime(1970, 1, 1)
 
+def list_snapshot_ids():
+	"""Return snapshot ids (filenames) sorted newest->oldest from DB."""
+	db = get_db()
+	rows = db.execute("SELECT id FROM snapshots ORDER BY ts DESC").fetchall()
+	return [r["id"] for r in rows]
+
+def prev_snapshot_id(current_id: str, ids_desc):
+	"""Given current snapshot id and list sorted desc, return previous (older) id."""
+	try:
+		i = ids_desc.index(current_id)
+		return ids_desc[i+1] if i+1 < len(ids_desc) else None
+	except ValueError:
+		return None
+
+def all_levels_for_snapshot(snapshot_id: str):
+	db = get_db()
+	rows = db.execute(
+		"SELECT DISTINCT level FROM heroes WHERE snapshot_id=? AND level IS NOT NULL ORDER BY level",
+		(snapshot_id,)
+	).fetchall()
+	return [r["level"] for r in rows]
+
+# -----------------------------
+# Query builders
+# -----------------------------
+def _player_value_expr(param: str):
+	# Returns SQL expression (string) for value.
+	if param == "Сумма статов":
+		return "(strength + defense + dexterity + mastery + vitality)"
+	mapping = {
+		"Слава": "glory",
+		"Побед": "wins",
+		"Поражений": "losses",
+		"Побед над Драконом": "dragon_wins",
+		"Побед над Змеем": "snake_wins",
+		"Убито зверей": "beasts_killed",
+		"Сила": "strength",
+		"Защита": "defense",
+		"Ловкость": "dexterity",
+		"Мастерство": "mastery",
+		"Живучесть": "vitality",
+		"Награбил (серебро)": "rob_silver",
+		"Потерял (серебро)": "lost_silver",
+		"Награбил (кристаллы)": "rob_crystals",
+		"Потерял (кристаллы)": "lost_crystals",
+	}
+	return mapping.get(param, "glory")
+
+def query_rating_overall(snapshot_id: str, prev_id: str | None, param: str, level: int | None):
+	db = get_db()
+	val = _player_value_expr(param)
+
+	where = "h.snapshot_id=?"
+	args = [snapshot_id]
+	if level is not None:
+		where += " AND h.level=?"
+		args.append(level)
+
+	if prev_id:
+		sql = f"""
+		SELECT
+			h.pid AS pid,
+			h.name AS name,
+			h.level AS level,
+			{val} AS value,
+			({val} - COALESCE(p.{val.split()[-1] if val.isidentifier() else '0'}, 0)) AS delta
+		FROM heroes h
+		LEFT JOIN heroes p
+			ON p.snapshot_id=? AND p.pid=h.pid
+		WHERE {where}
+		ORDER BY value DESC
+		LIMIT ?
+		"""
+		# delta expr above is tricky for computed values. We'll do a safer approach below in python
+		"""
+		"""
+	# We will handle delta safely by selecting prev value separately
+	if prev_id:
+		sql = f"""
+		SELECT
+			h.pid AS pid,
+			h.name AS name,
+			h.level AS level,
+			{val} AS value,
+			({val} - COALESCE(pv.prev_value, 0)) AS delta
+		FROM heroes h
+		LEFT JOIN (
+			SELECT pid, {val} AS prev_value
+			FROM heroes
+			WHERE snapshot_id=?
+		) pv ON pv.pid=h.pid
+		WHERE {where}
+		ORDER BY value DESC
+		LIMIT ?
+		"""
+		args2 = [prev_id] + args + [MAX_BEST_PER_LIST]
+		rows = db.execute(sql, args2).fetchall()
+	else:
+		sql = f"""
+		SELECT h.pid AS pid, h.name AS name, h.level AS level, {val} AS value, NULL AS delta
+		FROM heroes h
+		WHERE {where}
+		ORDER BY value DESC
+		LIMIT ?
+		"""
+		args2 = args + [MAX_BEST_PER_LIST]
+		rows = db.execute(sql, args2).fetchall()
+
+	rating = [(r["pid"], r["name"], r["level"], int(r["value"] or 0), (int(r["delta"]) if r["delta"] is not None else None)) for r in rows]
+	return rating
+
+
+def query_growth_between(snap_from: str, snap_to: str, param: str, level: int | None):
+	"""
+	Returns list of tuples: (pid, name, level, diff, extra)
+	diff = value(to) - value(from)
+	extra = per-fight average for robbed/lost params (same idea as old code)
+	"""
+	db = get_db()
+	val = _player_value_expr(param)
+
+	# Bring previous snapshot values + wins/losses (for "extra")
+	sub_prev = f"""
+		SELECT pid,
+			   {val} AS prev_value,
+			   wins AS prev_wins,
+			   losses AS prev_losses
+		FROM heroes
+		WHERE snapshot_id=?
+	"""
+
+	diff_expr = f"({val} - COALESCE(pv.prev_value, 0))"
+
+	extra_expr = "NULL"
+	if param.startswith("Награбил"):
+		extra_expr = f"CASE WHEN (c.wins - COALESCE(pv.prev_wins, 0)) > 0 THEN ROUND({diff_expr} * 1.0 / (c.wins - COALESCE(pv.prev_wins, 0))) ELSE NULL END"
+	elif param.startswith("Потерял"):
+		extra_expr = f"CASE WHEN (c.losses - COALESCE(pv.prev_losses, 0)) > 0 THEN ROUND({diff_expr} * 1.0 / (c.losses - COALESCE(pv.prev_losses, 0))) ELSE NULL END"
+
+	where = "c.snapshot_id=?"
+	args = [snap_to]
+	if level is not None:
+		where += " AND c.level=?"
+		args.append(level)
+
+	sql = f"""
+	SELECT
+		c.pid AS pid,
+		c.name AS name,
+		c.level AS level,
+		{diff_expr} AS diff,
+		{extra_expr} AS extra
+	FROM heroes c
+	LEFT JOIN ({sub_prev}) pv ON pv.pid=c.pid
+	WHERE {where}
+	ORDER BY diff DESC
+	LIMIT ?
+	"""
+
+	rows = db.execute(sql, [snap_from] + args + [MAX_BEST_PER_LIST]).fetchall()
+	rating = [
+		(r["pid"], r["name"], r["level"], int(r["diff"] or 0), (int(r["extra"]) if r["extra"] is not None else None))
+		for r in rows
+	]
+	return rating
+
+def query_group_overall(snapshot_id: str, prev_id: str | None, group_kind: str, score_param: str, level: int | None):
+	"""
+	group_kind: "Клан" or "Братство"
+	score_param: "Слава" or "Сумма статов"
+	Returns list of dicts compatible with existing template:
+	  {name, score, delta, count, count_delta, members:[{pid,name,level,value,delta,_rank}]}
+	"""
+	db = get_db()
+	if group_kind == "Клан":
+		gid_col, gname_col = "clan_id", "clan"
+	else:
+		gid_col, gname_col = "brotherhood_id", "brotherhood"
+
+	val = _player_value_expr(score_param)
+
+	where = f"snapshot_id=? AND {gid_col} IS NOT NULL AND {gid_col} != 0 AND TRIM(COALESCE({gname_col},'')) != ''"
+	args = [snapshot_id]
+	if level is not None:
+		where += " AND level=?"
+		args.append(level)
+
+	cur_rows = db.execute(
+		f"SELECT pid, name, level, {val} AS value, {gid_col} AS gid, {gname_col} AS gname FROM heroes WHERE {where}",
+		args
+	).fetchall()
+
+	prev_groups = {}
+	prev_value_by_pid = {}
+	if prev_id:
+		args_p = [prev_id]
+		where_p = f"snapshot_id=? AND {gid_col} IS NOT NULL AND {gid_col} != 0 AND TRIM(COALESCE({gname_col},'')) != ''"
+		if level is not None:
+			where_p += " AND level=?"
+			args_p.append(level)
+		prev_rows = db.execute(
+			f"SELECT pid, name, level, {val} AS value, {gid_col} AS gid, {gname_col} AS gname FROM heroes WHERE {where_p}",
+			args_p
+		).fetchall()
+		for r in prev_rows:
+			pid = r["pid"]
+			prev_value_by_pid[pid] = int(r["value"] or 0)
+			gid = r["gid"]
+			gname = (r["gname"] or "").strip()
+			if gid not in prev_groups:
+				prev_groups[gid] = {"name": gname, "score": 0, "count": 0}
+			prev_groups[gid]["score"] += int(r["value"] or 0)
+			prev_groups[gid]["count"] += 1
+
+	# build current groups + members
+	groups = {}
+	for r in cur_rows:
+		gid = r["gid"]
+		gname = (r["gname"] or "").strip()
+		if gid not in groups:
+			groups[gid] = {"name": gname, "score": 0, "members": []}
+		v = int(r["value"] or 0)
+		groups[gid]["score"] += v
+		groups[gid]["members"].append({
+			"pid": r["pid"],
+			"name": r["name"],
+			"level": r["level"],
+			"value": v,
+			"delta": (v - prev_value_by_pid[r["pid"]]) if (prev_id and r["pid"] in prev_value_by_pid) else None
+		})
+
+	# merge with previous groups for delta/count_delta
+	out = []
+	all_gids = set(groups.keys()) | set(prev_groups.keys())
+	for gid in all_gids:
+		cur = groups.get(gid, {"name": prev_groups.get(gid, {}).get("name", str(gid)), "score": 0, "members": []})
+		prev = prev_groups.get(gid, {"score": 0, "count": 0})
+		members = cur.get("members", [])
+		members.sort(key=lambda h: h.get("value", 0), reverse=True)
+		for i, h in enumerate(members, 1):
+			h["_rank"] = i
+		out.append({
+			"name": cur.get("name") or prev.get("name") or str(gid),
+			"score": int(cur.get("score", 0)),
+			"delta": int(cur.get("score", 0)) - int(prev.get("score", 0)),
+			"count": len(members),
+			"count_delta": len(members) - int(prev.get("count", 0)),
+			"members": members
+		})
+
+	out.sort(key=lambda g: g.get("score", 0), reverse=True)
+	return out
+
+def query_level_summaries(snapshot_id: str, prev_id: str | None):
+	db = get_db()
+	cur = db.execute(
+		"SELECT level, COUNT(*) AS cnt FROM heroes WHERE snapshot_id=? AND level IS NOT NULL GROUP BY level ORDER BY level DESC",
+		(snapshot_id,)
+	).fetchall()
+	prev_map = {}
+	if prev_id:
+		prev_rows = db.execute(
+			"SELECT level, COUNT(*) AS cnt FROM heroes WHERE snapshot_id=? AND level IS NOT NULL GROUP BY level",
+			(prev_id,)
+		).fetchall()
+		prev_map = {r["level"]: r["cnt"] for r in prev_rows}
+
+	groups = []
+	total = 0
+	total_prev = 0
+	for r in cur:
+		lvl = r["level"]
+		cnt = r["cnt"]
+		total += cnt
+		total_prev += prev_map.get(lvl, 0)
+		groups.append({
+			"level": lvl,
+			"count": cnt,
+			"count_delta": cnt - prev_map.get(lvl, 0),
+		})
+	totals = {"count": total, "prev_count": total_prev, "delta": total - total_prev}
+	return groups, totals
+
+def query_level_players(snapshot_id: str, level: int, limit: int, offset: int):
+	db = get_db()
+	rows = db.execute(
+		"""
+		SELECT pid, name, strength, defense, dexterity, mastery, vitality
+		FROM heroes
+		WHERE snapshot_id=? AND level=?
+		ORDER BY (strength+defense+dexterity+mastery+vitality) DESC, pid ASC
+		LIMIT ? OFFSET ?
+		""",
+		(snapshot_id, level, limit, offset)
+	).fetchall()
+	return [dict(r) for r in rows]
+
+def query_best30(param: str, level: int | None):
+	db = get_db()
+	latest = db.execute("SELECT id FROM snapshots ORDER BY ts DESC LIMIT 1").fetchone()
+	if not latest:
+		return []
+	best_for = latest["id"]
+
+	sql = """
+		SELECT pid, name, level, diff
+		FROM best30
+		WHERE best_for_snapshot_id=? AND param=?
+	"""
+	args = [best_for, param]
+
+	if level is not None:
+		sql += " AND level=?"
+		args.append(level)
+
+	sql += " ORDER BY diff DESC LIMIT ?"
+	args.append(MAX_BEST_PER_LIST)
+
+	rows = db.execute(sql, args).fetchall()
+	return [(r["pid"], r["name"], r["level"], int(r["diff"] or 0), None) for r in rows]
+
+
+# -----------------------------
+# Routes
+# -----------------------------
+@app.route("/robots.txt")
+def robots():
+	return app.send_static_file("robots.txt")
+
+@app.route("/api/level_players")
+def api_level_players():
+	if not _db_available():
+		return jsonify({"error": "db_not_available"}), 503
+
+	snapshot_id = request.args.get("snapshot_id")
+	level = request.args.get("level", type=int)
+	page = request.args.get("page", default=1, type=int)
+	page_size = request.args.get("page_size", default=LEVEL_PAGE_SIZE, type=int)
+
+	if not snapshot_id or level is None or page < 1:
+		return jsonify({"error": "bad_request"}), 400
+
+	offset = (page - 1) * page_size
+	players = query_level_players(snapshot_id, level, limit=page_size + 1, offset=offset)
+	has_more = len(players) > page_size
+	players = players[:page_size]
+
+	# render rows HTML via partial template
+	rows_html = render_template("level_players_rows.html", players=players, start_index=offset)
+
+	return jsonify({
+		"rows_html": rows_html,
+		"next_page": page + 1,
+		"has_more": has_more,
+	})
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-	global json_files
-	selected_param = "Слава"
-	selected_file = json_files[0] if json_files else None
-	file1 = file2 = None
+	mode = request.form.get("mode", "Общий")
+	selected_param = request.form.get("param", "Слава")
+	selected_level = request.form.get("level", "Все")
+
+	json_files = list_snapshot_ids() if _db_available() else []
+	file_selected = json_files[0] if json_files else None
+	file1 = None
+	file2 = None
+
+	all_params = param_options[:]
+	param_selectable = params_for_mode(mode, all_params)
+
+
+	if not json_files:
+		return render_template("index.html",
+			mode=mode,
+			param=selected_param,
+			selected_param=selected_param,
+			param_selectable=param_selectable,
+			param_options=param_selectable,
+			json_files=[],
+			selected_file=None,
+			file=None, file1=None, file2=None,
+			selected_level=selected_level,
+			all_levels=[],
+			rating=[],
+			level_ratings=[],
+			totals={"count": 0, "delta": 0},
+			best_by_param=[],
+			column2_name="Игрок",
+			column3_name=selected_param,
+			diff_hours=None,
+		)
+
+
 	rating = []
 	level_ratings = []
+	totals = {"count": 0, "delta": 0}
 	best_by_param = []
-	filename_display = ""
-	diff_hours = None
-	selected_level = request.form.get("level", "Все")
-	files_display = []
-	for f in json_files:
-		dt = _dt(f)
-		if dt:
-			files_display.append((f, dt.strftime("%d.%m.%Y %H:%M")))
 
-	mode = request.form.get("mode") or "Общий"
+	if selected_param == "По уровню":
+		if mode in ("Прирост", "Лучшие (приросты)"):
+			selected_param = "Слава"
 
-	selected_param = request.form.get("param", selected_param)
+	if (selected_param.startswith("Кланы") or selected_param.startswith("Братства")) and mode == "Прирост":
+		selected_param = "Слава"
 
+	ctx = {
+		# общие
+		"mode": mode,
+		"param": selected_param,
+		"selected_param": selected_param,
+		"param_selectable": param_selectable,
+		"param_options": param_selectable,
+		"json_files": json_files,
+
+		# выбранные файлы/даты
+		"selected_file": file_selected,
+		"file": file_selected,
+		"file1": file1,
+		"file2": file2,
+
+		# фильтры
+		"selected_level": selected_level,
+		"all_levels": [],
+
+		# результаты
+		"rating": [],
+		"level_ratings": [],
+		"totals": {"count": 0, "delta": 0},
+		"best_by_param": [],
+
+		# подписи колонок/прочее
+		"column2_name": "Игрок",
+		"column3_name": selected_param,
+		"diff_hours": None,
+	}
+
+	level_int = None
+	if selected_level and selected_level != "Все":
+		try:
+			level_int = int(selected_level)
+		except Exception:
+			level_int = None
+
+	# Column titles (used in template)
 	column2_name = "Игрок"
 	column3_name = selected_param
-	if selected_param == "Братства по славе":
-		if mode == "Прирост":
-			selected_param = 'Слава'
-		column2_name = "Братство"
-		column3_name = "Слава"
-	elif selected_param == "Кланы по славе":
-		if mode == "Прирост":
-			selected_param = 'Слава'
-		column2_name = "Клан"
-		column3_name = "Слава"
-	elif selected_param == "Кланы по статам":
-		if mode == "Прирост":
-			selected_param = 'Слава'
-		column2_name = "Клан"
+	if selected_param == "По уровню":
+		column2_name = "Уровень"
 		column3_name = "Сумма статов"
-	elif selected_param == "По уровню":
-		if mode == "Прирост" or mode == "Лучшие (приросты)":
-			selected_param = 'Слава'
+	elif selected_param.startswith("Кланы"):
+		column2_name = "Клан"
+		column3_name = "Слава" if "славе" in selected_param else "Сумма статов"
+	elif selected_param.startswith("Братства"):
+		column2_name = "Братство"
+		column3_name = "Слава" if "славе" in selected_param else "Сумма статов"
+
+	ctx["column2_name"] = column2_name
+	ctx["column3_name"] = column3_name
 
 	if mode == "Общий":
-		selected_file = request.form.get("file", selected_file)
-
-		data = {}
-		if selected_file:
-			try:
-				data = snapshot(selected_file)
-			except FileNotFoundError:
-				app.logger.warning(f"Файл снапшота не найден: {selected_file}, пропускаем.")
-				selected_file = None
-
-		prev_name = None
-		prev_snap = None
-		file_index = None
-		if selected_file and selected_file in json_files:
-			file_index = json_files.index(selected_file)
-			if file_index + 1 < len(json_files):
-				prev_name = json_files[file_index + 1]
-				try:
-					prev_snap = snapshot(prev_name)
-				except FileNotFoundError:
-					app.logger.warning(f"Файл предыдущего снапшота не найден: {prev_name}")
-					prev_snap = None
+		file_selected = request.form.get("file", file_selected)
+		prev_id = prev_snapshot_id(file_selected, json_files)
 
 		if selected_param == "По уровню":
-			rating = []
+			level_ratings, totals = query_level_summaries(file_selected, prev_id)
+			all_levels = all_levels_for_snapshot(file_selected)
 
-			level_ratings = get_level_ratings(data)
-
-			try:
-				files_sorted = sorted(json_files, key=extract_datetime_from_filename)
-				idx = files_sorted.index(selected_file)
-			except Exception:
-				files_sorted = json_files[:]
-				idx = 0
-
-			prev_name = files_sorted[idx - 1] if idx - 1 >= 0 else None
-
-			def _count_by_level(snapshot: dict) -> dict:
-				counts = {}
-				for hero in snapshot.values():
-					lvl = hero.get("Уровень")
-					if isinstance(lvl, int):
-						counts[lvl] = counts.get(lvl, 0) + 1
-				return counts
-
-			curr_counts = _count_by_level(data)
-			prev_counts = _count_by_level(snapshot(prev_name)) if prev_name else {}
-
-			for g in level_ratings:
-				lvl = g["level"] if isinstance(g, dict) else getattr(g, "level", None)
-				delta = curr_counts.get(lvl, 0) - prev_counts.get(lvl, 0)
-				if isinstance(g, dict):
-					g["count_delta"] = delta
-				else:
-					setattr(g, "count_delta", delta)
-		else:
-			if selected_level and selected_level != "Все":
-				selected_level = int(selected_level)
-				data = {pid: h for pid, h in data.items() if h.get("Уровень") == selected_level}
-
-			rating = build_rating(data, selected_param, prev_snap)
-
-		dt = extract_datetime_from_filename(selected_file) if selected_file else None
-		diff_hours = None
-		if dt and prev_name:
-			prev_dt = extract_datetime_from_filename(prev_name)
-			if prev_dt:
-				diff_hours = round((dt - prev_dt).total_seconds()/3600, 1)
-		filename_display = dt.strftime("%d.%m.%Y %H:%M") if dt else (selected_file or "")
-
-	elif mode == "Прирост":
-		file1 = request.form.get("file1")
-		file2 = request.form.get("file2")
-		if (not file1 or not file2) and len(json_files) >= 2:
-			file2 = json_files[0]
-			file1 = json_files[1]
-		elif len(json_files) == 1:
-			file1 = file2 = json_files[0]
-
-		if file1 and file2:
-			try:
-				data1 = snapshot(file1)
-				data2 = snapshot(file2)
-			except FileNotFoundError as e:
-				app.logger.warning(f"Один из файлов для прироста не найден: {e}")
-				data1 = data2 = {}
-
-			if selected_level and selected_level != "Все":
-				selected_level = int(selected_level)
-				data2 = {pid: h for pid, h in data2.items() if h.get("Уровень") == selected_level}
-
-			if selected_param == "Сумма статов":
-				param = stat_keys
+			ctx["level_ratings"] = level_ratings
+			ctx["totals"] = totals
+			ctx["rating"] = []
+		elif selected_param.startswith("Кланы") or selected_param.startswith("Братства"):
+			if selected_param.startswith("Кланы"):
+				group_kind = "Клан"
 			else:
-				param = selected_param
+				group_kind = "Братство"
+			score_param = "Слава" if "славе" in selected_param else "Сумма статов"
+			rating = query_group_overall(file_selected, prev_id, group_kind=group_kind, score_param=score_param, level=level_int)
+			all_levels = all_levels_for_snapshot(file_selected)
+			ctx["rating"] = rating
+		else:
+			rating = query_rating_overall(file_selected, prev_id, selected_param, level_int)
+			all_levels = all_levels_for_snapshot(file_selected)
+			ctx["rating"] = rating
 
-			rating = build_growth_rating(data1, data2, param)
-			dt1 = extract_datetime_from_filename(file1)
-			dt2 = extract_datetime_from_filename(file2)
-			if dt1 and dt2:
-				diff_hours = round((dt2 - dt1).total_seconds()/3600, 1)
-			filename_display = f"{dt1.strftime('%d.%m.%Y %H:%M')} → {dt2.strftime('%d.%m.%Y %H:%M')}" if dt1 and dt2 else ""
-
-		if not data1 or not data2:
-			rating = []
-			filename_display = "Один из выбранных файлов недоступен"
-
-	elif mode == "Лучшие (приросты)":
-		lvl_key = None if (not selected_level or selected_level == "Все") else int(selected_level)
-		best_list = BEST_CACHE.get((selected_param, lvl_key), [])
-		best_by_param = [{"param": selected_param, "rating": best_list}]
-	else:
-		selected_param = request.args.get("param", param_options[0])
-
-	base_snap = snapshot(selected_file) if selected_file else {}
-	all_levels = sorted({h.get("Уровень") for h in base_snap.values() if isinstance(h.get("Уровень"), int)}, reverse=True)
-
-	param_selectable = [
-		p for p in param_options
-		if not (
-			mode in ("Прирост", "Лучшие (приросты)")
-			and (p.startswith("Кланы") or p.startswith("Братства") or p == "По уровню")
-		)
-	]
+		ctx["all_levels"] = all_levels
+		ctx["file"] = file_selected
+		ctx["selected_file"] = file_selected
 
 
-	return render_template(
-		"index.html",
-		rating=rating,
-		level_ratings=level_ratings,
-		best_by_param=best_by_param,
-		param=selected_param,
-		mode=mode,
-		filename_display=filename_display,
-		json_files=json_files,
-		selected_file=selected_file,
-		file1=file1,
-		file2=file2,
-		param_options=param_options,
-		column2_name=column2_name,
-		column3_name=column3_name,
-		param_selectable=param_selectable,
-		files_display=[(f, extract_datetime_from_filename(f).strftime("%d.%m.%Y %H:%M")) for f in json_files],
-		extract_datetime_from_filename=extract_datetime_from_filename,
-		enumerate=enumerate,
-		diff_hours=(None if mode == "Лучшие (приросты)" else diff_hours),
-		all_levels=all_levels,
-		selected_level=selected_level,
-	)
+	if mode == "Прирост":
+		# UI uses file1, file2
+		file1 = request.form.get("file1", json_files[1] if len(json_files) > 1 else json_files[0])
+		file2 = request.form.get("file2", json_files[0])
+
+		# ensure file2 is newer than file1? keep as user selected
+		rating = query_growth_between(file1, file2, selected_param, level_int)
+		all_levels = all_levels_for_snapshot(file2)
+
+		ctx["rating"] = rating
+		ctx["all_levels"] = all_levels
+		ctx["file1"] = file1
+		ctx["file2"] = file2
+
+
+	if mode == "Лучшие (приросты)":
+		# build blocks for each param on demand (keep template-compatible)
+		best_rating = query_best30(selected_param, level_int)
+		best_by_param = [{"param": selected_param, "rating": best_rating}]
+		all_levels = all_levels_for_snapshot(json_files[0])
+
+		ctx["best_by_param"] = best_by_param
+		ctx["all_levels"] = all_levels
+
+
+	# fallback
+	return render_template("index.html", **ctx)
 
 
 if __name__ == "__main__":
-	app.run(debug=True, use_reloader=False, threaded=True)
+	app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)

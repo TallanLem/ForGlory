@@ -25,18 +25,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run script
+      - name: Run parser (get_data.py)
         run: python get_data.py
 
-      - name: Commit changes if any
+      - name: Build/Update SQLite DB (last 40 snapshots + best30)
+        run: |
+          python tools/build_db.py --data-dir data --db-path data/db/ratings.sqlite --keep 40 --best-window-days 30
+
+      - name: Commit and push changes
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add data/
+          git add data/ .github/workflows/get-data.yml
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "auto: update player data"
+            git commit -m "auto: update player data + sqlite db"
             git push
           fi
 

@@ -194,23 +194,16 @@ function handleEnterKey(event) {
     {% endif %}
 
     {% if param == "По уровню" and mode == "Общий" %}
-		{% set totals = namespace(count=0, delta=0) %}
-		{% for g in level_ratings %}
-		  {% set totals.count = totals.count + (g.players|length) %}
-		  {% if g.count_delta is defined and g.count_delta %}
-			{% set totals.delta = totals.delta + g.count_delta %}
-		  {% endif %}
-		{% endfor %}
-
 		<div style="margin:8px 0 6px; font-weight:600;">
-		  Всего игроков {{ totals.count }}
+		  Всего {{ totals.count }} игроков
 		  {% if totals.delta %}
 			(<span style="color: {{ 'green' if totals.delta > 0 else 'red' }};">
 			  {% if totals.delta > 0 %}+{{ totals.delta }}{% else %}{{ totals.delta }}{% endif %}
 			</span>)
 		  {% endif %}
 		</div>
-	
+
+
       <tbody>
         {% for group in level_ratings %}
         <tr>
@@ -219,7 +212,7 @@ function handleEnterKey(event) {
 				<summary>
 				  Уровень {{ group.level }}
 				  (
-					{{ group.players|length }} игроков
+					{{ group.count }}
 					{% set d = (group.count_delta if group.count_delta is defined else 0) %}
 					{% if d %}
 					  <span style="color: {{ 'green' if d > 0 else 'red' }};">
@@ -252,30 +245,28 @@ function handleEnterKey(event) {
 						  <td class="tight" style="text-align:center;">{{ group.avg['vitality']|round(0)|int }}</td>
 						</tr>
 					{% endif %}
-                  <tbody>
-                    {% for player in group.players %}
-                    <tr data-nickname="{{ player.name|lower|e }}">
-						<td style="text-align:center; white-space:nowrap;">
-						  <span style="display:inline-block; min-width:1.5ch; padding:0 4px; box-sizing:border-box;">
-							{% if loop.index == 1 %}🥇{% elif loop.index == 2 %}🥈{% elif loop.index == 3 %}🥉{% else %}{{ loop.index }}{% endif %}
-						  </span>
-						</td>
-                      <td class="wide-name shorten" style="text-align: left; padding-right: 6px;">
-                        <a href="https://playwekings.mobi/hero/detail?player={{ player.ID }}" target="_blank" style="display: inline-flex; width: 100%; overflow: hidden;">
-							<span style="flex:1 1 auto; min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
-							  {{ player.name }}
-							</span>
-                        </a>
-                      </td>
-                      <td class="tight" style="text-align:center;">{{ player.strength }}</td>
-                      <td class="tight" style="text-align:center;">{{ player.defense }}</td>
-                      <td class="tight" style="text-align:center;">{{ player.dexterity }}</td>
-                      <td class="tight" style="text-align:center;">{{ player.mastery }}</td>
-                      <td class="tight" style="text-align:center;">{{ player.vitality }}</td>
-                    </tr>
-                    {% endfor %}
-                  </tbody>
+                  
+<tbody id="lvl-{{ group.level }}-tbody"
+       data-snapshot="{{ file }}"
+       data-level="{{ group.level }}"
+       data-page="0">
+</tbody>
+
                 </table>
+
+                <div class="level-controls" style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+					<button type="button"
+							class="load-more-btn"
+							data-level="{{ group.level }}"
+							style="padding:6px 10px; border-radius:8px; border:1px solid #999;
+								   background:rgba(255,255,255,.06);
+								   color:#cfcfcf;
+								   cursor:pointer; display:none;">
+					  Показать ещё
+					</button>
+                  <span class="load-status" data-level="{{ group.level }}" style="opacity:.85; color:#bdbdbd;"></span>
+
+                </div>
               </div>
             </details>
           </td>
@@ -504,6 +495,76 @@ function handleEnterKey(event) {
 		  sync();
 		});
 	</script>
+
+
+<script>
+(function () {
+  async function fetchLevelPlayers(snapshotId, level, page, pageSize) {
+    const url = `/api/level_players?snapshot_id=${encodeURIComponent(snapshotId)}&level=${encodeURIComponent(level)}&page=${encodeURIComponent(page)}&page_size=${encodeURIComponent(pageSize)}`;
+    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return await res.json();
+  }
+
+  function getTbody(level) {
+    return document.getElementById(`lvl-${level}-tbody`);
+  }
+
+  async function loadLevel(level, append) {
+    const tbody = getTbody(level);
+    if (!tbody) return;
+
+    const snapshotId = tbody.dataset.snapshot;
+    const pageSize = 100;
+    const currentPage = parseInt(tbody.dataset.page || "0", 10);
+    const nextPage = append ? (currentPage + 1) : 1;
+
+    const status = document.querySelector(`.load-status[data-level="${level}"]`);
+    const btn = document.querySelector(`.load-more-btn[data-level="${level}"]`);
+
+    try {
+      if (status) status.textContent = "Загрузка…";
+      const data = await fetchLevelPlayers(snapshotId, level, nextPage, pageSize);
+
+      if (!append) {
+        tbody.innerHTML = data.rows_html || "";
+      } else {
+        tbody.insertAdjacentHTML("beforeend", data.rows_html || "");
+      }
+
+      tbody.dataset.page = String(nextPage);
+
+      if (btn) {
+        btn.style.display = data.has_more ? "inline-block" : "none";
+      }
+      if (status) status.textContent = data.has_more ? "" : "Конец списка";
+    } catch (e) {
+      if (status) status.textContent = "Ошибка загрузки";
+      console.error(e);
+    }
+  }
+
+  // Load first page on <details> open
+  document.querySelectorAll("details").forEach((d) => {
+    d.addEventListener("toggle", () => {
+      if (!d.open) return;
+      const tbody = d.querySelector("tbody[id^='lvl-'][data-level]");
+      if (!tbody) return;
+      const level = tbody.dataset.level;
+      const page = parseInt(tbody.dataset.page || "0", 10);
+      if (page === 0) loadLevel(level, false);
+    });
+  });
+
+  // Load more
+  document.addEventListener("click", (ev) => {
+    const btn = ev.target.closest(".load-more-btn");
+    if (!btn) return;
+    const level = btn.dataset.level;
+    loadLevel(level, true);
+  });
+})();
+</script>
 
 </body>
 </html>

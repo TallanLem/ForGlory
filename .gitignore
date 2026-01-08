@@ -1,1 +1,3 @@
 /old_data/
+data/db/*.sqlite
+data/db/ratings.sqlite

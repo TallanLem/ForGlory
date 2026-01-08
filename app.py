@@ -13,10 +13,6 @@ if Compress:
 
 @app.template_global()
 def extract_datetime_from_filename(filename: str) -> datetime:
-	"""
-	heroes_2026-01-08_23-33-22.json.gz
-	heroes_2026-01-08.json.gz (если когда-то появится)
-	"""
 	m = re.search(r'(\d{4}-\d{2}-\d{2})(?:[_T](\d{2})-(\d{2})-(\d{2}))?', filename)
 	if not m:
 		return datetime.min
@@ -416,7 +412,7 @@ def query_best30(param: str, level: int | None):
 	best_for = latest["id"]
 
 	sql = """
-		SELECT pid, name, level, diff
+		SELECT pid, name, level, diff, best_snapshot_id
 		FROM best30
 		WHERE best_for_snapshot_id=? AND param=?
 	"""
@@ -430,7 +426,7 @@ def query_best30(param: str, level: int | None):
 	args.append(MAX_BEST_PER_LIST)
 
 	rows = db.execute(sql, args).fetchall()
-	return [(r["pid"], r["name"], r["level"], int(r["diff"] or 0), None) for r in rows]
+	return [(r["pid"], r["name"], r["level"], int(r["diff"] or 0), r["best_snapshot_id"]) for r in rows]
 
 
 # -----------------------------

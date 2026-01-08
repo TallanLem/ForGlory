@@ -183,7 +183,14 @@ function handleEnterKey(event) {
 					  </span>
 					</a>
                 </td>
-                <td style="text-align:center;">{{ row[3] }}</td>
+					<td style="text-align:center;">
+					  {{ row[3] }}
+					  {% if row[4] %}
+						<sup style="font-size:0.7em; opacity:.75; margin-left:4px;">
+						  {{ extract_datetime_from_filename(row[4]).strftime('%d.%m') }}
+						</sup>
+					  {% endif %}
+					</td>
               </tr>
             {% endfor %}
           </tbody>

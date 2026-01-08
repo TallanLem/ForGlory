@@ -114,13 +114,14 @@ function handleEnterKey(event) {
         </select>
       </div>
 		{% if not (param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы")) %}
-			 <div class="filter-row" style="display:flex; align-items:center; gap:10px; flex-wrap:nowrap; margin-bottom:10px; width:100%;">
-				<input type="text" id="scroll-nick" list="nicknames" placeholder="Поиск по нику"
-						style="flex:1 1 auto; min-width:0; padding:6px 8px; border:1px solid #ccc; border-radius:4px;"
-						onkeydown="handleEnterKey(event)">
-				<datalist id="nicknames"></datalist>
-				  <button type="button" onclick="searchByNickname()" style="font-size: 16px;">🔍</button>
-			  </div>
+				<div class="filter-row search-row">
+				  <input type="text" id="scroll-nick" list="nicknames" placeholder="Поиск по нику"
+						 class="search-input"
+						 onkeydown="handleEnterKey(event)">
+				  <datalist id="nicknames"></datalist>
+				  <button type="button" onclick="searchByNickname()" class="search-btn">🔍</button>
+				</div>
+
 		
 				<div class="controls-row row-inline" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
 				  <label for="level-select" style="white-space: nowrap;">Уровень:</label>
@@ -160,12 +161,12 @@ function handleEnterKey(event) {
       {% set blocks = best_by_param | selectattr('param', 'equalto', param) | list %}
       {% set block = blocks[0] if blocks|length > 0 else None %}
       {% if block and block.rating and block.rating|length > 0 %}
-        <table style="table-layout: fixed; width: 100%;">
+        <table class="rating-table">
           <thead>
             <tr>
-              <th style="width:40px;">№</th>
+              <th style="width:40px; text-align:center;">№</th>
               <th style="text-align:left;">Игрок</th>
-              <th style="text-align:center;">{{ block.param }}</th>
+              <th style="text-align:left;">{{ block.param }}</th>
             </tr>
           </thead>
           <tbody>
@@ -183,10 +184,10 @@ function handleEnterKey(event) {
 					  </span>
 					</a>
                 </td>
-					<td style="text-align:center;">
+					<td style="text-align:left;">
 					  {{ row[3] }}
 					  {% if row[4] %}
-						<sup style="font-size:0.7em; opacity:.75; margin-left:4px;">
+						<sup style="font-size:0.6em; opacity:.75; margin-left:4px;">
 						  {{ extract_datetime_from_filename(row[4]).strftime('%d.%m') }}
 						</sup>
 					  {% endif %}
@@ -243,7 +244,7 @@ function handleEnterKey(event) {
 					</thead>
 					{% if group.avg %}
 						<tr class="avg-row">
-						  <td class="tight" style="text-align:center;">Ø</td>
+						  <td class="tight" style="text-align:left;">Ø</td>
 						  <td class="wide-name" style="text-align:left; font-weight:600;">Среднее по уровню</td>
 						  <td class="tight" style="text-align:center;">{{ group.avg['strength']|round(0)|int }}</td>
 						  <td class="tight" style="text-align:center;">{{ group.avg['defense']|round(0)|int }}</td>
@@ -283,13 +284,13 @@ function handleEnterKey(event) {
     {% endif %}
 
     {% if mode != 'Лучшие (приросты)' %}
-      <table style="width: 100%; table-layout: auto;">
+      <table class="rating-table">
         <thead>
           {% if param != "По уровню" %}
           <tr>
             <th style="width:40px; text-align:center;">№</th>
-            <th>{{ column2_name }}</th>
-            <th class="tight">{{ column3_name }}</th>
+            <th style="text-align:left;">{{ column2_name }}</th>
+            <th class="tight" style="text-align:left;">{{ column3_name }}</th>
           </tr>
           {% endif %}
         </thead>
@@ -336,7 +337,7 @@ function handleEnterKey(event) {
 									</span>
 								  </a>
 								</td>
-							<td class="tight" style="text-align:center;">
+							<td class="tight" style="text-align:left;">
 							  {{ hscore }}
 							  {% if hdelta is not none and hdelta != 0 %}
 								<span style="color: {{ 'green' if hdelta > 0 else 'red' }}; margin-left: 6px;">
@@ -350,7 +351,7 @@ function handleEnterKey(event) {
                     </div>
                   </details>
                 </td>
-				<td class="tight" style="text-align:center;">
+				<td class="tight" style="text-align:left;">
 				  {% set rdelta = row.get('delta') %}
 				  <span class="total-inline">
 					{{ row.score }}
@@ -391,7 +392,7 @@ function handleEnterKey(event) {
 					  </span>
 					</a>
                 </td>
-				<td style="text-align: center;">
+				<td style="text-align:left;">
 				  {{ value }}
 				  {% if mode == "Общий" and row[4] is not none and row[4] != 0 %}
 					<span style="color: {{ 'green' if row[4] > 0 else 'red' }};">({{ '+' if row[4] > 0 else '-' }}{{ row[4] }})</span>

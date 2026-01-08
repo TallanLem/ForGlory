@@ -318,3 +318,47 @@ tbody tr:not(.avg-row) td {
   background: rgba(255, 215, 0, 0.15);
   border-color: rgba(255, 215, 0, 0.7);
 }
+
+/* Компактнее на ПК */
+.rating-table {
+  width: 100%;
+  table-layout: auto;
+}
+
+/* зазоры для ПК */
+@media (min-width: 700px) {
+
+  .rating-table {
+    width: auto;
+    display: inline-table;
+    table-layout: auto;
+  }
+
+  .rating-table th,
+  .rating-table td {
+    padding: 3px 5px;   /* <-- горизонтальный зазор: px */
+    white-space: nowrap;
+  }
+
+  .rating-table th:nth-child(1),
+  .rating-table td:nth-child(1) { min-width: 5px; }
+
+  .rating-table th:nth-child(2),
+  .rating-table td:nth-child(2) { min-width: 240px; } /* игрок */
+
+  .rating-table th:nth-child(3),
+  .rating-table td:nth-child(3) { min-width: 170px; } /* параметр */
+}
+
+/* Поиск: на смарте широкий, на ПК компактный */
+.search-row { width: 100%; gap: 10px; flex-wrap: nowrap; }
+.search-input { flex: 1 1 auto; min-width: 0; padding: 6px 8px; }
+.search-btn { font-size: 16px; }
+
+@media (min-width: 700px) {
+  .search-row { width: auto; } /* не растягиваем */
+  .search-input {
+    flex: 0 0 auto;
+    width: clamp(240px, 32vw, 520px);
+  }
+}

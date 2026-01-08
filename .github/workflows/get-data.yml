@@ -49,7 +49,7 @@ jobs:
           grep -qxF "data/db/ratings.sqlite" .gitignore || echo "data/db/ratings.sqlite" >> .gitignore
           git add .gitignore
 
-          git add data/heroes_*.json.gz data/index.json .github/workflows/get-data.yml || true
+          git add data/ .github/workflows/get-data.yml || true
 
           if git diff --cached --quiet; then
             echo "No snapshot changes to commit."

@@ -2,50 +2,80 @@ name: Get Player Data
 
 on:
   schedule:
-    - cron: '0 20 * * *'
+    # Runs daily at 20:00 UTC (≈21:00 Amsterdam in winter)
+    - cron: "0 20 * * *"
   workflow_dispatch:
 
-jobs:
-  run-script:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+permissions:
+  contents: write
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          python-version: '3.11'
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run parser (get_data.py)
-        run: python get_data.py
+      # Your parser step (adjust path if your script has a different name)
+      - name: Fetch latest snapshots
+        run: |
+          python get_data.py
 
       - name: Build/Update SQLite DB (last 40 snapshots + best30)
         run: |
           python tools/build_db.py --data-dir data --db-path data/db/ratings.sqlite --keep 40 --best-window-days 30
 
-      - name: Commit and push changes
+      - name: Commit and push snapshots (no sqlite)
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add data/ .github/workflows/get-data.yml
+
+          # Ensure sqlite never gets committed (idempotent)
+          if [ ! -f .gitignore ]; then touch .gitignore; fi
+          grep -qxF "data/db/*.sqlite" .gitignore || echo "data/db/*.sqlite" >> .gitignore
+          grep -qxF "data/db/ratings.sqlite" .gitignore || echo "data/db/ratings.sqlite" >> .gitignore
+          git add .gitignore
+
+          # Commit only snapshot files (adjust patterns if needed)
+          git add data/heroes_*.json.gz data/index.json .github/workflows/get-data.yml || true
+
           if git diff --cached --quiet; then
-            echo "No changes to commit."
+            echo "No snapshot changes to commit."
           else
-            git commit -m "auto: update player data + sqlite db"
-            git push
+            git commit -m "auto: update snapshots"
+            git push origin HEAD:main
           fi
 
+      - name: Upload ratings.sqlite to GitHub Release (db-latest)
+        uses: ncipollo/release-action@v1
+        with:
+          tag: db-latest
+          name: Database (latest)
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: data/db/ratings.sqlite
+
       - name: Trigger Render deploy hook
-        if: success() && env.RENDER_DEPLOY_HOOK_URL != ''
-        run: curl -X GET "$RENDER_DEPLOY_HOOK_URL"
+        if: success()
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL secret not set; skipping deploy trigger."
+            exit 0
+          fi
+          curl -fsSL -X GET "$RENDER_DEPLOY_HOOK_URL"

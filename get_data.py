@@ -21,10 +21,44 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(SCRIPT_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
-with open(os.path.join(SCRIPT_DIR, 'static', 'cfg.json'), encoding="utf-8") as f:
-	raw = json.load(f)
-	cookies = {c["name"]: c["value"] for c in raw}
-	dom = 'https://playwekings.mobi/'
+def load_env_file(path: str = ".env") -> dict:
+	env = {}
+	p = os.path.join(SCRIPT_DIR, path)
+	if not os.path.exists(p):
+		return env
+	with open(p, "r", encoding="utf-8") as f:
+		for line in f:
+			line = line.strip()
+			if not line or line.startswith("#") or "=" not in line:
+				continue
+			k, v = line.split("=", 1)
+			env[k.strip()] = v.strip()
+	return env
+
+_ENV = load_env_file(".env")
+
+def env_get(key: str, default: str = "") -> str:
+	return os.getenv(key, _ENV.get(key, default))
+
+cookies_json = env_get("COOKIES_JSON", "").strip()
+if cookies_json:
+	raw = json.loads(cookies_json)
+else:
+	cookies_file = env_get("COOKIES_FILE", os.path.join(SCRIPT_DIR, "static", "cfg.json"))
+	with open(cookies_file, encoding="utf-8") as f:
+		raw = json.load(f)
+
+cookies = {c.get("name"): c.get("value") for c in raw if c.get("name") and c.get("value")}
+
+domain = env_get("WK_DOMAIN", "").strip().lstrip(".")
+if not domain:
+	for c in raw:
+		if c.get("name") == "wekings_session" and c.get("domain"):
+			domain = str(c["domain"]).lstrip(".")
+			break
+
+dom = f"https://{domain}/" if domain else "https://playwekings.mobi/"
+
 
 headers = {
 	"User-Agent": (
@@ -35,11 +69,11 @@ headers = {
 }
 
 def load_json_any(full_path: str):
-    if full_path.endswith(".gz"):
-        with gzip.open(full_path, "rt", encoding="utf-8") as f:
-            return json.load(f)
-    with open(full_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+	if full_path.endswith(".gz"):
+		with gzip.open(full_path, "rt", encoding="utf-8") as f:
+			return json.load(f)
+	with open(full_path, "r", encoding="utf-8") as f:
+		return json.load(f)
 
 
 def save_cookies(session, path):
@@ -167,26 +201,26 @@ async def fetch_hero(session, hero_id, sem):
 
 
 def final_ids():
-    folder = DATA_DIR
-    pattern = re.compile(r"^heroes_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.json(?:\.gz)?$")
+	folder = DATA_DIR
+	pattern = re.compile(r"^heroes_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.json(?:\.gz)?$")
 
-    files_with_dates = []
-    for filename in os.listdir(folder):
-        m = pattern.match(filename)
-        if m:
-            date_str = m.group(1)
-            files_with_dates.append((filename, date_str))
+	files_with_dates = []
+	for filename in os.listdir(folder):
+		m = pattern.match(filename)
+		if m:
+			date_str = m.group(1)
+			files_with_dates.append((filename, date_str))
 
-    files_with_dates.sort(key=lambda x: x[1], reverse=True)
+	files_with_dates.sort(key=lambda x: x[1], reverse=True)
 
-    if not files_with_dates:
-        return None
+	if not files_with_dates:
+		return None
 
-    latest_name = files_with_dates[0][0]
-    full_path = os.path.join(folder, latest_name)
-    data = load_json_any(full_path)
+	latest_name = files_with_dates[0][0]
+	full_path = os.path.join(folder, latest_name)
+	data = load_json_any(full_path)
 
-    return [int(x) for x in data.keys()]
+	return [int(x) for x in data.keys()]
 
 
 def check_site_ready(url, max_attempts=15, delay=600):

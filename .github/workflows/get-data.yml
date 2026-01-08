@@ -2,7 +2,6 @@ name: Get Player Data
 
 on:
   schedule:
-    # Runs daily at 20:00 UTC (≈21:00 Amsterdam in winter)
     - cron: "0 20 * * *"
   workflow_dispatch:
 
@@ -30,8 +29,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Your parser step (adjust path if your script has a different name)
       - name: Fetch latest snapshots
+        env:
+          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
         run: |
           python get_data.py
 
@@ -44,13 +44,11 @@ jobs:
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-          # Ensure sqlite never gets committed (idempotent)
           if [ ! -f .gitignore ]; then touch .gitignore; fi
           grep -qxF "data/db/*.sqlite" .gitignore || echo "data/db/*.sqlite" >> .gitignore
           grep -qxF "data/db/ratings.sqlite" .gitignore || echo "data/db/ratings.sqlite" >> .gitignore
           git add .gitignore
 
-          # Commit only snapshot files (adjust patterns if needed)
           git add data/heroes_*.json.gz data/index.json .github/workflows/get-data.yml || true
 
           if git diff --cached --quiet; then

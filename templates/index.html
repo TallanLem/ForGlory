@@ -133,7 +133,7 @@ function handleEnterKey(event) {
 							or selected_level == 'Все' %}selected{% endif %}>
 					  Все
 					</option>
-					{% for lvl in all_levels %}
+					{% for lvl in all_levels|reverse %}
 					  <option value="{{ lvl }}"
 						{% if selected_level is defined and (selected_level|string) == (lvl|string) %}selected{% endif %}>
 						{{ lvl }}

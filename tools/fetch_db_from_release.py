@@ -13,23 +13,30 @@ api_url = f"https://api.github.com/repos/{OWNER_REPO}/releases/tags/{TAG}"
 
 req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json"})
 if TOKEN:
-    req.add_header("Authorization", f"Bearer {TOKEN}")
+	req.add_header("Authorization", f"Bearer {TOKEN}")
 
 with urllib.request.urlopen(req) as r:
-    data = json.load(r)
+	data = json.load(r)
 
 download_url = None
 for a in data.get("assets", []):
-    if a.get("name") == ASSET_NAME:
-        download_url = a.get("browser_download_url")
-        break
+	if a.get("name") == ASSET_NAME:
+		download_url = a.get("browser_download_url")
+		break
 
 if not download_url:
-    print(f"ERROR: asset '{ASSET_NAME}' not found in release tag '{TAG}' for {OWNER_REPO}", file=sys.stderr)
-    sys.exit(2)
+	print(f"ERROR: asset '{ASSET_NAME}' not found in release tag '{TAG}' for {OWNER_REPO}", file=sys.stderr)
+	sys.exit(2)
 
 os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
 
 print("Downloading:", download_url)
-urllib.request.urlretrieve(download_url, OUT_PATH)
+
+dl_req = urllib.request.Request(download_url, headers={"User-Agent": "ForGlory-Render"})
+if TOKEN:
+	dl_req.add_header("Authorization", f"Bearer {TOKEN}")
+
+with urllib.request.urlopen(dl_req) as resp, open(OUT_PATH, "wb") as f:
+	f.write(resp.read())
+
 print("Saved to:", OUT_PATH)

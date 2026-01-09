@@ -1,7 +1,7 @@
 
 import os, re, sqlite3, logging
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify, g
+from flask import Flask, render_template, request, jsonify, g, send_from_directory
 try:
 	from flask_compress import Compress
 except Exception:
@@ -434,7 +434,7 @@ def query_best30(param: str, level: int | None):
 # -----------------------------
 @app.route("/robots.txt")
 def robots():
-	return app.send_static_file("robots.txt")
+	return send_from_directory(app.static_folder, "robots.txt")
 
 @app.route("/api/level_players")
 def api_level_players():

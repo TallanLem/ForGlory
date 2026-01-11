@@ -397,7 +397,13 @@ def query_level_players(snapshot_id: str, level: int, limit: int, offset: int):
 		SELECT pid, name, strength, defense, dexterity, mastery, vitality
 		FROM heroes
 		WHERE snapshot_id=? AND level=?
-		ORDER BY (strength+defense+dexterity+mastery+vitality) DESC, pid ASC
+		ORDER BY
+			strength DESC,
+			defense DESC,
+			dexterity DESC,
+			mastery DESC,
+			vitality DESC,
+			pid ASC
 		LIMIT ? OFFSET ?
 		""",
 		(snapshot_id, level, limit, offset)

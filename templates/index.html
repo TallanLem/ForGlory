@@ -176,18 +176,18 @@ function handleEnterKey(event) {
                 <td style="text-align:left;">
 					<a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank"
 					   style="display:inline-flex; width:100%; overflow:hidden; min-width:0; align-items:baseline;">
-					  <span style="flex:1 1 auto; min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
+					  <span style="min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
 						{{ row[1] }}
 					  </span>
-					  <span style="flex:0 0 auto; white-space:nowrap; margin-left:6px;">
-						[{{ row[2] }}]
+					  <span style="margin-left:6px; font-size:0.75em; position:relative; top:-0.45em;">
+						{{ row[2] }}
 					  </span>
 					</a>
                 </td>
 					<td style="text-align:left;">
 					  {{ row[3] }}
 					  {% if row[4] %}
-						<sup style="font-size:0.6em; opacity:.75; margin-left:4px;">
+						<sup style="font-size:0.6em; margin-left:2px;">
 						  {{ extract_datetime_from_filename(row[4]).strftime('%d.%m') }}
 						</sup>
 					  {% endif %}
@@ -203,38 +203,27 @@ function handleEnterKey(event) {
 
     {% if param == "По уровню" and mode == "Общий" %}
 		<div style="margin:8px 0 6px; font-weight:600;">
-		  Всего {{ totals.count }} игроков
-		  {% if totals.delta %}
-			(<span style="color: {{ 'green' if totals.delta > 0 else 'red' }};">
+		  Всего {{ totals.count }} {% if totals.delta %}
+			<span style="font-size:0.75em; position:relative; top:-0.45em; color: {{ 'green' if totals.delta > 0 else 'red' }};">
 			  {% if totals.delta > 0 %}+{{ totals.delta }}{% else %}{{ totals.delta }}{% endif %}
-			</span>)
+			</span>
 		  {% endif %}
+		   игроков
 		</div>
-
-
       <tbody>
         {% for group in level_ratings %}
         <tr>
           <td colspan="3">
             <details>
-				<summary>
-				  Уровень {{ group.level }}
-				  (
-					{{ group.count }}
-					{% set d = (group.count_delta if group.count_delta is defined else 0) %}
-					{% if d %}
-					  <span style="color: {{ 'green' if d > 0 else 'red' }};">
-						{% if d > 0 %}+{{ d }}{% else %}{{ d }}{% endif %}
-					  </span>
-					{% endif %}
-				  )
-				</summary>
+				{% set d = group.count_delta if group.count_delta is defined else 0 %}
+				<summary>Уровень {{ group.level }} [{{ group.count }}{% if d %}<span style="margin-left:4px;font-size:0.75em;position:relative;top:-0.45em;color:{{ 'green' if d > 0 else 'red' }};">{% if d > 0 %}+{{ d }}{% else %}{{ d }}{% endif %}</span>{% endif %}]</summary>
+
               <div class="details">
-                <table class="inner-table" style="table-layout: auto; width: 100%;">
+                <table class="inner-table" style="table-layout:auto; width:100%; max-width:480px; font-size:0.8em;">
                   <thead>
 					  <tr>
 						<th style="text-align:center;">№</th>
-						<th class="wide-name" style="text-align:left; width: 40%;">Ник</th>
+						<th class="wide-name" style="text-align:left;">Ник</th>
 						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/strength.png') }}" alt="strength" class="icon"></th>
 						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/defense.png') }}" alt="defense" class="icon"></th>
 						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/dexterity.png') }}" alt="dexterity" class="icon"></th>
@@ -242,23 +231,50 @@ function handleEnterKey(event) {
 						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/vitality.png') }}" alt="vitality" class="icon"></th>
 					  </tr>
 					</thead>
-					{% if group.avg %}
-						<tr class="avg-row">
-						  <td class="tight" style="text-align:left;">Ø</td>
-						  <td class="wide-name" style="text-align:left; font-weight:600;">Среднее по уровню</td>
-						  <td class="tight" style="text-align:center;">{{ group.avg['strength']|round(0)|int }}</td>
-						  <td class="tight" style="text-align:center;">{{ group.avg['defense']|round(0)|int }}</td>
-						  <td class="tight" style="text-align:center;">{{ group.avg['dexterity']|round(0)|int }}</td>
-						  <td class="tight" style="text-align:center;">{{ group.avg['mastery']|round(0)|int }}</td>
-						  <td class="tight" style="text-align:center;">{{ group.avg['vitality']|round(0)|int }}</td>
+					
+					{% set b = (balance_map.get(group.level) if balance_map is defined else None) %}
+					{% if b and b.stats %}
+					  <tbody>
+						<tr>
+						  <td class="tight" style="text-align:center;">⚖</td>
+
+							<td class="wide-name" style="text-align:left; font-weight:600; white-space:nowrap;">
+							  <span style="display:flex; width:100%; align-items:center; gap:8px;">
+									<span>Баланс</span>
+
+									<span style="margin-left:auto; font-weight:400; font-size:0.9em; line-height:1.15;padding-right:8px; text-align:right; white-space:normal;">
+									<span style="display:block;">ср. {{ group.level - 1 }} ур.×1.15</span>
+									<span style="display:block;">макс. {{ group.level }} ур.×0.75</span>
+								</span>
+							  </span>
+							</td>
+							
+						  {% for key in ['strength','defense','dexterity','mastery','vitality'] %}
+							{% set s = b.stats[key] %}
+							<td class="tight" style="text-align:center; white-space:nowrap; line-height:1.15;">
+							  <span style="display:block">{{ s.upper15 }}</span>
+							  <span style="display:block;">{{ s.cap75 }}</span>
+							</td>
+						  {% endfor %}
 						</tr>
+
+						{% if b.count < 20 %}
+						  <tr>
+							<td></td>
+							<td colspan="6" style="text-align:left; padding:4px 0; font-size:0.8em;">
+							  Баланс недоступен: на уровне сейчас {{ b.count }}<20 игроков.
+							</td>
+						  </tr>
+						{% endif %}
+					  </tbody>
 					{% endif %}
-                  
-<tbody id="lvl-{{ group.level }}-tbody"
-       data-snapshot="{{ file }}"
-       data-level="{{ group.level }}"
-       data-page="0">
-</tbody>
+
+
+					<tbody id="lvl-{{ group.level }}-tbody"
+						   data-snapshot="{{ file }}"
+						   data-level="{{ group.level }}"
+						   data-page="0">
+					</tbody>
 
                 </table>
 
@@ -298,17 +314,31 @@ function handleEnterKey(event) {
           {% if param.startswith('Кланы') or param.startswith('Братства') %}
             {% for idx, row in enumerate(rating, 1) %}
               <tr>
-                <td style="text-align:center; padding:0 6px; white-space:nowrap;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
+                <td style="text-align:left; padding:0 6px; white-space:nowrap;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
                 <td>
                   <details>
-                    <summary style="display: inline-flex; width: 100%; overflow: hidden;">
-                      <span style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; padding-right: 6px;">
-                        {{ row.name }}
-                      </span>
-                      <span style="flex-shrink: 0;">
-                        ({{ row.members|length }}{% if row.count_delta and row.count_delta != 0 %} <span style="color: {{ 'green' if row.count_delta > 0 else 'red' }};">{% if row.count_delta > 0 %}+{{ row.count_delta }}{% else %}{{ row.count_delta }}{% endif %}</span>{% endif %})
-                      </span>
-                    </summary>
+					<summary style="display:inline-flex; width:100%; overflow:hidden; align-items:baseline;">
+					  <span style="
+							min-width:0;
+							max-width:20ch;
+							white-space:nowrap;
+							overflow:hidden;
+							text-overflow:ellipsis;
+							display:inline-block;
+						  ">
+						{{ row.name }}&nbsp;
+					  </span>
+
+					  <span style="white-space:nowrap;">
+						[{{ row.members|length }}{% if row.count_delta and row.count_delta != 0 %}
+						  <span style="font-size:0.75em; position:relative; top:-0.45em; color: {{ 'green' if row.count_delta > 0 else 'red' }};">
+							{% if row.count_delta > 0 %}+{{ row.count_delta }}{% else %}{{ row.count_delta }}{% endif %}
+						  </span>
+						{% endif %}]
+					  </span>
+					</summary>
+
+					
                     <div class="details">
                       <table class="inner-table" style="table-layout: auto; width: 100%;">
 						  <colgroup>
@@ -324,52 +354,43 @@ function handleEnterKey(event) {
 						  {% set hrank  = hero.get('_rank', loop.index) %}
 						  {% set hdelta = hero.get('delta') %}
 
-						  <tr data-nickname="{{ (hname or '')|lower|e }}">
-							<td>{{ hrank }}</td>
-								<td style="width: clamp(300px, 68%, 760px);">
-								  <a href="https://playwekings.mobi/hero/detail?player={{ hid }}" target="_blank"
-									 style="display:inline-flex; width:100%; overflow:hidden; min-width:0; align-items:baseline;">
-									<span style="flex:1 1 auto; min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
-									  {{ hname }}
-									</span>
-									<span style="flex:0 0 auto; white-space:nowrap; margin-left:6px;">
-									  [{{ hlevel if hlevel is not none else '?' }}]
-									</span>
-								  </a>
-								</td>
-							<td class="tight" style="text-align:left;">
-							  {{ hscore }}
-							  {% if hdelta is not none and hdelta != 0 %}
-								<span style="color: {{ 'green' if hdelta > 0 else 'red' }}; margin-left: 6px;">
-								  ({% if hdelta > 0 %}+{{ hdelta }}{% elif hdelta < 0 %}{{ hdelta }}{% endif %})
-								</span>
-							  {% endif %}
-							</td>
-						  </tr>
+							<tr data-nickname="{{ (hname or '')|lower|e }}">
+							  <td>{{ hrank }}</td>
+
+							  <td style="width:auto;">
+								<a href="https://playwekings.mobi/hero/detail?player={{ hid }}" target="_blank"
+								   style="display:inline-flex; width:100%; overflow:hidden; min-width:0; flex-wrap:nowrap; white-space:nowrap; align-items:center;">
+								  <span style="min-width:0; max-width:15ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block;">
+									{{ hname }}
+								  </span>
+								  <span style="white-space:nowrap; font-size:0.75em; display:inline-block; transform:translateY(-0.35em); line-height:1;">
+									{{ hlevel }}
+								  </span>
+								</a>
+
+							  </td>
+
+							  <td class="tight" style="text-align:left; padding-left:5px; flex-wrap:nowrap; white-space:nowrap">
+								{{ hscore }}
+								{% if hdelta is not none and hdelta != 0 %}
+								  <sup style="color: {{ 'green' if hdelta > 0 else 'red' }}; font-size:0.75em;">
+									{% if hdelta > 0 %}+{{ hdelta }}{% elif hdelta < 0 %}{{ hdelta }}{% endif %}
+								  </sup>
+								{% endif %}
+							  </td>
+							</tr>
+
 						{% endfor %}
                       </table>
                     </div>
                   </details>
                 </td>
-				<td class="tight" style="text-align:left;">
+				
+				<td class="tight" style="text-align:left; padding-left:4px; white-space:nowrap;">
 				  {% set rdelta = row.get('delta') %}
-				  <span class="total-inline">
-					{{ row.score }}
-					{% if rdelta is not none and rdelta != 0 %}
-					  <span style="color: {{ 'green' if rdelta > 0 else 'red' }}; margin-left: 6px;">
-						({% if rdelta > 0 %}+{{ rdelta }}{% elif rdelta < 0 %}{{ rdelta }}{% endif %})
-					  </span>
-					{% endif %}
-				  </span>
-				  <span class="total-stacked" style="display:none;">
-					<div>{{ row.score }}</div>
-					{% if rdelta is not none and rdelta != 0 %}
-					  <div style="color: {{ 'green' if rdelta > 0 else 'red' }};">
-						({% if rdelta > 0 %}+{{ rdelta }}{% elif rdelta < 0 %}{{ rdelta }}{% endif %})
-					  </div>
-					{% endif %}
-				  </span>
+				  {{ row.score }}{% if rdelta is not none and rdelta != 0 %}<span style="font-size:0.75em; display:inline-block; transform:translateY(-0.35em); line-height:1; color: {{ 'green' if rdelta > 0 else 'red' }};">{% if rdelta > 0 %}+{{ rdelta }}{% else %}{{ rdelta }}{% endif %}</span>{% endif %}
 				</td>
+
               </tr>
             {% endfor %}
           {% else %}
@@ -380,25 +401,29 @@ function handleEnterKey(event) {
 				{% set value = row[3] %}
 		
               <tr data-nickname="{{ name|lower|e }}" {% if highlighted %}style="background: rgba(255,215,0,0.2);"{% endif %}>
-                <td style="width:40px; text-align:center;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
+                <td style="width:30px; text-align:center;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
                 <td class="wide-name">
 					<a href="https://playwekings.mobi/hero/detail?player={{ ID }}" target="_blank"
 					   style="display:inline-flex; width:100%; overflow:hidden; min-width:0; align-items:baseline;">
-					  <span style="flex:1 1 auto; min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
+					  <span style="min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
 						{{ name }}
 					  </span>
-					  <span style="flex:0 0 auto; white-space:nowrap; margin-left:6px;">
-						[{{ level }}]
-					  </span>
+					<span style="white-space:nowrap; font-size:0.75em; display:inline-block; transform:translateY(-0.35em); line-height:1;">
+					  {{ level }}
+					</span>
 					</a>
                 </td>
 				<td style="text-align:left;">
 				  {{ value }}
 				  {% if mode == "Общий" and row[4] is not none and row[4] != 0 %}
-					<span style="color: {{ 'green' if row[4] > 0 else 'red' }};">({{ '+' if row[4] > 0 else '-' }}{{ row[4] }})</span>
+					<span style="color: {{ 'green' if row[4] > 0 else 'red' }}; font-size:0.75em; display:inline-block; transform:translateY(-0.35em); line-height:1;">
+					  {{ '+' if row[4] > 0 else '-' }}{{ row[4] }}
+					</span>
 				  {% endif %}
 				  {% if mode != "Общий" and row[4] is not none %}
-					<span style="color: #888;">({{ row[4] }} за бой)</span>
+					<span style="color:#888; font-size:0.75em; display:inline-block; transform:translateY(-0.35em); line-height:1;">
+					  {{ row[4] }} ⚔
+					</span>
 				  {% endif %}
 				</td>
               </tr>
@@ -408,6 +433,30 @@ function handleEnterKey(event) {
       </table>
     {% endif %}
   </div>
+  
+  <script>
+	  function toggleHelp(btn, id) {
+		const el = document.getElementById(id);
+		const isOpen = el.style.display !== 'none';
+
+		// Закрыть все остальные подсказки
+		document.querySelectorAll('[id^="bal_"]').forEach(x => { x.style.display = 'none'; });
+
+		// Открыть/закрыть текущую
+		el.style.display = isOpen ? 'none' : 'block';
+		btn.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+	  }
+
+	  // Закрывать подсказки по клику вне
+	  document.addEventListener('click', function (e) {
+		const isHelp = e.target.closest && e.target.closest('button[aria-controls^="bal_"], span[id^="bal_"]');
+		if (!isHelp) {
+		  document.querySelectorAll('[id^="bal_"]').forEach(x => { x.style.display = 'none'; });
+		  document.querySelectorAll('button[aria-controls^="bal_"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
+		}
+	  });
+	</script>
+
 
   <script>
 	  // Сбор никнеймов безопасно (без вложенных if/else внутри JS-массива)

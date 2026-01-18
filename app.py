@@ -8,6 +8,7 @@ except Exception:
 	Compress = None
 
 app = Flask(__name__)
+
 if Compress:
 	Compress(app)
 
@@ -390,6 +391,81 @@ def query_level_summaries(snapshot_id: str, prev_id: str | None):
 	totals = {"count": total, "prev_count": total_prev, "delta": total - total_prev}
 	return groups, totals
 
+BALANCE_STATS = ("strength", "defense", "dexterity", "mastery", "vitality")
+
+def query_level_balance(snapshot_id: str):
+    db = get_db()
+
+    avg_rows = db.execute(
+        """
+        SELECT
+            level,
+            COUNT(*) AS cnt,
+            AVG(strength)  AS strength,
+            AVG(defense)   AS defense,
+            AVG(dexterity) AS dexterity,
+            AVG(mastery)   AS mastery,
+            AVG(vitality)  AS vitality
+        FROM heroes
+        WHERE snapshot_id=? AND level IS NOT NULL
+        GROUP BY level
+        """,
+        (snapshot_id,)
+    ).fetchall()
+
+    max_rows = db.execute(
+        """
+        SELECT
+            level,
+            MAX(strength)  AS strength,
+            MAX(defense)   AS defense,
+            MAX(dexterity) AS dexterity,
+            MAX(mastery)   AS mastery,
+            MAX(vitality)  AS vitality
+        FROM heroes
+        WHERE snapshot_id=? AND level IS NOT NULL
+        GROUP BY level
+        """,
+        (snapshot_id,)
+    ).fetchall()
+
+    avg_map = {r["level"]: dict(r) for r in avg_rows}
+    max_map = {r["level"]: dict(r) for r in max_rows}
+
+    balance_map = {}
+    for lvl, cur_avg in avg_map.items():
+        cnt = int(cur_avg.get("cnt") or 0)
+        below = lvl - 1
+
+        below_avg = avg_map.get(below)
+        cur_max = max_map.get(lvl)
+
+        # Если нет уровня ниже или нет max на текущем — цифры не посчитать
+        if not below_avg or not cur_max:
+            balance_map[lvl] = {"eligible": cnt >= 20, "count": cnt, "stats": None}
+            continue
+
+        stats = {}
+        for s in BALANCE_STATS:
+            base = float(below_avg.get(s) or 0.0)
+            upper15 = base * 1.15
+            cap75 = float(cur_max.get(s) or 0.0) * 0.75
+
+            # Сразу округляем до целых для вывода (как ты хочешь)
+            base_i = int(round(base))
+            upper15_i = int(round(upper15))
+            cap75_i = int(round(cap75))
+
+            stats[s] = {
+                "base": base_i,
+                "upper15": upper15_i,
+                "cap75": cap75_i,
+            }
+
+        balance_map[lvl] = {"eligible": cnt >= 20, "count": cnt, "stats": stats}
+
+    return balance_map
+
 def query_level_players(snapshot_id: str, level: int, limit: int, offset: int):
 	db = get_db()
 	rows = db.execute(
@@ -580,9 +656,11 @@ def index():
 			level_ratings, totals = query_level_summaries(file_selected, prev_id)
 			all_levels = all_levels_for_snapshot(file_selected)
 
+			ctx["balance_map"] = query_level_balance(file_selected)
 			ctx["level_ratings"] = level_ratings
 			ctx["totals"] = totals
 			ctx["rating"] = []
+
 		elif selected_param.startswith("Кланы") or selected_param.startswith("Братства"):
 			if selected_param.startswith("Кланы"):
 				group_kind = "Клан"
@@ -632,4 +710,7 @@ def index():
 
 
 if __name__ == "__main__":
-	app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=False)
+	app.config["TEMPLATES_AUTO_RELOAD"] = True
+	app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
+	app.jinja_env.auto_reload = True
+	app.run(debug=False, use_reloader=False)

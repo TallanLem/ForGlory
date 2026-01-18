@@ -140,7 +140,6 @@ table {
   width: 100%;
   border-collapse: collapse;
   margin-top: 2px;
-  font-size: 0.95em;
 }
 
 a {
@@ -165,11 +164,6 @@ tr:nth-child(even) {
 
 tr:nth-child(odd) {
   background-color: var(--odd-row);
-}
-
-.details {
-  margin-left: 1em;
-  font-size: 0.9em;
 }
 
 details > summary {
@@ -231,54 +225,11 @@ details > summary {
     flex-wrap: wrap;
   }
   
-	td:nth-child(2),
-	th:nth-child(2) {
-	  white-space: nowrap;
-	  overflow: hidden;
-	  text-overflow: ellipsis;
-	  max-width: 100%;
+	/* не даёт таблице становиться шире экрана */
+	.rating-table.group-table{
+	width: 100%;
+	table-layout: fixed;
 	}
-
-	td:nth-child(3),
-	th:nth-child(3) {
-	  white-space: nowrap;
-	  overflow: visible;
-	  width: auto; 
-	}
-	
-	  .inner-table td {
-		font-size: 12px;
-	  }
-
-	  .inner-table td.heroes {
-		width: 30%;
-		white-space: nowrap;
-		font-size: 12px;
-		padding-left: 4px;
-			
-	  }
-
-	  .inner-table td a {
-		display: flex;
-		flex-wrap: nowrap;
-		align-items: center;
-		width: 100%;
-		overflow: hidden;
-	  }
-
-	  .inner-table td a span:first-child {
-		flex: 1;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	  }
-
-	  .inner-table td a span:last-child {
-		flex-shrink: 0;
-		margin-left: 6px;
-		white-space: nowrap;
-	  }
 }
 
 
@@ -344,10 +295,10 @@ tbody tr:not(.avg-row) td {
   .rating-table td:nth-child(1) { min-width: 5px; }
 
   .rating-table th:nth-child(2),
-  .rating-table td:nth-child(2) { min-width: 240px; } /* игрок */
+  .rating-table td:nth-child(2) { min-width: 200px; } /* игрок */
 
   .rating-table th:nth-child(3),
-  .rating-table td:nth-child(3) { min-width: 170px; } /* параметр */
+  .rating-table td:nth-child(3) { min-width: 130px; } /* параметр */
 }
 
 /* Поиск: на смарте широкий, на ПК компактный */

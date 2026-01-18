@@ -176,7 +176,7 @@ function handleEnterKey(event) {
                 <td style="text-align:left;">
 					<a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank"
 					   style="display:inline-flex; width:100%; overflow:hidden; min-width:0; align-items:baseline;">
-					  <span style="min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
+					  <span style="min-width:0; max-width:18ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
 						{{ row[1] }}
 					  </span>
 					  <span style="margin-left:6px; font-size:0.75em; position:relative; top:-0.45em;">
@@ -187,7 +187,7 @@ function handleEnterKey(event) {
 					<td style="text-align:left;">
 					  {{ row[3] }}
 					  {% if row[4] %}
-						<sup style="font-size:0.6em; margin-left:2px;">
+						<sup style="font-size:0.6em; margin-left:2px; opacity:.7">
 						  {{ extract_datetime_from_filename(row[4]).strftime('%d.%m') }}
 						</sup>
 					  {% endif %}
@@ -242,7 +242,7 @@ function handleEnterKey(event) {
 							  <span style="display:flex; width:100%; align-items:center; gap:8px;">
 									<span>Баланс</span>
 
-									<span style="margin-left:auto; font-weight:400; font-size:0.9em; line-height:1.15;padding-right:8px; text-align:right; white-space:normal;">
+									<span style="margin-left:auto; font-weight:400; font-size:0.9em; line-height:1.15;padding-right:4px; text-align:right; white-space:normal;">
 									<span style="display:block;">ср. {{ group.level - 1 }} ур.×1.15</span>
 									<span style="display:block;">макс. {{ group.level }} ур.×0.75</span>
 								</span>
@@ -262,7 +262,7 @@ function handleEnterKey(event) {
 						  <tr>
 							<td></td>
 							<td colspan="6" style="text-align:left; padding:4px 0; font-size:0.8em;">
-							  Баланс недоступен: на уровне сейчас {{ b.count }}<20 игроков.
+							  Баланс недоступен: на уровне {{ b.count }}<20 игроков.
 							</td>
 						  </tr>
 						{% endif %}
@@ -314,7 +314,7 @@ function handleEnterKey(event) {
           {% if param.startswith('Кланы') or param.startswith('Братства') %}
             {% for idx, row in enumerate(rating, 1) %}
               <tr>
-                <td style="text-align:left; padding:0 6px; white-space:nowrap;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
+                <td style="text-align:center; padding:0 6px; white-space:nowrap;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
                 <td>
                   <details>
 					<summary style="display:inline-flex; width:100%; overflow:hidden; align-items:baseline;">
@@ -340,7 +340,7 @@ function handleEnterKey(event) {
 
 					
                     <div class="details">
-                      <table class="inner-table" style="table-layout: auto; width: 100%;">
+                      <table class="inner-table" style="table-layout: auto; width: 100%; font-size:0.8em">
 						  <colgroup>
 							<col style="width:auto;">
 							<col style="width:52%;">
@@ -355,9 +355,9 @@ function handleEnterKey(event) {
 						  {% set hdelta = hero.get('delta') %}
 
 							<tr data-nickname="{{ (hname or '')|lower|e }}">
-							  <td>{{ hrank }}</td>
+							  <td style="text-align:left;">{{ hrank }}</td>
 
-							  <td style="width:auto;">
+							  <td style="width:auto">
 								<a href="https://playwekings.mobi/hero/detail?player={{ hid }}" target="_blank"
 								   style="display:inline-flex; width:100%; overflow:hidden; min-width:0; flex-wrap:nowrap; white-space:nowrap; align-items:center;">
 								  <span style="min-width:0; max-width:15ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block;">
@@ -373,7 +373,7 @@ function handleEnterKey(event) {
 							  <td class="tight" style="text-align:left; padding-left:5px; flex-wrap:nowrap; white-space:nowrap">
 								{{ hscore }}
 								{% if hdelta is not none and hdelta != 0 %}
-								  <sup style="color: {{ 'green' if hdelta > 0 else 'red' }}; font-size:0.75em;">
+								  <sup style="color: {{ 'green' if hdelta > 0 else 'red' }}; font-size:0.8em;">
 									{% if hdelta > 0 %}+{{ hdelta }}{% elif hdelta < 0 %}{{ hdelta }}{% endif %}
 								  </sup>
 								{% endif %}

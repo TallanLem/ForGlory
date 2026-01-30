@@ -53,25 +53,25 @@ param_options = [
 ]
 
 PARAM_EXCLUDE_BY_MODE = {
-    "Прирост": {
-        "По уровню",
-        "Кланы по славе",
-        "Кланы по статам",
-        "Братства по славе",
-        "Братства по статам",
-    },
-    "Лучшие (приросты)": {
-        "По уровню",
-        "Кланы по славе",
-        "Кланы по статам",
-        "Братства по славе",
-        "Братства по статам",
-    },
+	"Прирост": {
+		"По уровню",
+		"Кланы по славе",
+		"Кланы по статам",
+		"Братства по славе",
+		"Братства по статам",
+	},
+	"Лучшие (приросты)": {
+		"По уровню",
+		"Кланы по славе",
+		"Кланы по статам",
+		"Братства по славе",
+		"Братства по статам",
+	},
 }
 
 def params_for_mode(mode: str, all_params: list[str]) -> list[str]:
-    banned = PARAM_EXCLUDE_BY_MODE.get(mode, set())
-    return [p for p in all_params if p not in banned]
+	banned = PARAM_EXCLUDE_BY_MODE.get(mode, set())
+	return [p for p in all_params if p not in banned]
 
 # -----------------------------
 # DB helpers
@@ -394,77 +394,77 @@ def query_level_summaries(snapshot_id: str, prev_id: str | None):
 BALANCE_STATS = ("strength", "defense", "dexterity", "mastery", "vitality")
 
 def query_level_balance(snapshot_id: str):
-    db = get_db()
+	db = get_db()
 
-    avg_rows = db.execute(
-        """
-        SELECT
-            level,
-            COUNT(*) AS cnt,
-            AVG(strength)  AS strength,
-            AVG(defense)   AS defense,
-            AVG(dexterity) AS dexterity,
-            AVG(mastery)   AS mastery,
-            AVG(vitality)  AS vitality
-        FROM heroes
-        WHERE snapshot_id=? AND level IS NOT NULL
-        GROUP BY level
-        """,
-        (snapshot_id,)
-    ).fetchall()
+	avg_rows = db.execute(
+		"""
+		SELECT
+			level,
+			COUNT(*) AS cnt,
+			AVG(strength)  AS strength,
+			AVG(defense)   AS defense,
+			AVG(dexterity) AS dexterity,
+			AVG(mastery)   AS mastery,
+			AVG(vitality)  AS vitality
+		FROM heroes
+		WHERE snapshot_id=? AND level IS NOT NULL
+		GROUP BY level
+		""",
+		(snapshot_id,)
+	).fetchall()
 
-    max_rows = db.execute(
-        """
-        SELECT
-            level,
-            MAX(strength)  AS strength,
-            MAX(defense)   AS defense,
-            MAX(dexterity) AS dexterity,
-            MAX(mastery)   AS mastery,
-            MAX(vitality)  AS vitality
-        FROM heroes
-        WHERE snapshot_id=? AND level IS NOT NULL
-        GROUP BY level
-        """,
-        (snapshot_id,)
-    ).fetchall()
+	max_rows = db.execute(
+		"""
+		SELECT
+			level,
+			MAX(strength)  AS strength,
+			MAX(defense)   AS defense,
+			MAX(dexterity) AS dexterity,
+			MAX(mastery)   AS mastery,
+			MAX(vitality)  AS vitality
+		FROM heroes
+		WHERE snapshot_id=? AND level IS NOT NULL
+		GROUP BY level
+		""",
+		(snapshot_id,)
+	).fetchall()
 
-    avg_map = {r["level"]: dict(r) for r in avg_rows}
-    max_map = {r["level"]: dict(r) for r in max_rows}
+	avg_map = {r["level"]: dict(r) for r in avg_rows}
+	max_map = {r["level"]: dict(r) for r in max_rows}
 
-    balance_map = {}
-    for lvl, cur_avg in avg_map.items():
-        cnt = int(cur_avg.get("cnt") or 0)
-        below = lvl - 1
+	balance_map = {}
+	for lvl, cur_avg in avg_map.items():
+		cnt = int(cur_avg.get("cnt") or 0)
+		below = lvl - 1
 
-        below_avg = avg_map.get(below)
-        cur_max = max_map.get(lvl)
+		below_avg = avg_map.get(below)
+		cur_max = max_map.get(lvl)
 
-        # Если нет уровня ниже или нет max на текущем — цифры не посчитать
-        if not below_avg or not cur_max:
-            balance_map[lvl] = {"eligible": cnt >= 20, "count": cnt, "stats": None}
-            continue
+		# Если нет уровня ниже или нет max на текущем — цифры не посчитать
+		if not below_avg or not cur_max:
+			balance_map[lvl] = {"eligible": cnt >= 20, "count": cnt, "stats": None}
+			continue
 
-        stats = {}
-        for s in BALANCE_STATS:
-            base = float(below_avg.get(s) or 0.0)
-            upper15 = base * 1.15
-            cap75 = float(cur_max.get(s) or 0.0) * 0.75
+		stats = {}
+		for s in BALANCE_STATS:
+			base = float(below_avg.get(s) or 0.0)
+			upper15 = base * 1.15
+			cap75 = float(cur_max.get(s) or 0.0) * 0.75
 
-            # Сразу округляем до целых для вывода (как ты хочешь)
-            base_i = int(round(base))
-            upper15_i = int(round(upper15))
-            cap75_i = int(round(cap75))
+			# Сразу округляем до целых для вывода (как ты хочешь)
+			upper15_i = int(round(upper15))
+			cap75_i   = int(round(cap75))
+			best_i    = min(upper15_i, cap75_i)
 
-            stats[s] = {
-                "base": base_i,
-                "upper15": upper15_i,
-                "cap75": cap75_i,
-            }
+			stats[s] = {
+				"upper15": upper15_i,
+				"cap75": cap75_i,
+				"best": best_i,
+			}
 
-        balance_map[lvl] = {"eligible": cnt >= 20, "count": cnt, "stats": stats}
+		balance_map[lvl] = {"eligible": cnt >= 20, "count": cnt, "stats": stats}
 
-    return balance_map
+	return balance_map
 
 def query_level_players(snapshot_id: str, level: int, limit: int, offset: int):
 	db = get_db()

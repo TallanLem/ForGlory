@@ -243,8 +243,7 @@ function handleEnterKey(event) {
 									<span>Баланс</span>
 
 									<span style="margin-left:auto; font-weight:400; font-size:0.9em; line-height:1.15;padding-right:4px; text-align:right; white-space:normal;">
-									<span style="display:block;">ср. {{ group.level - 1 }} ур.×1.15</span>
-									<span style="display:block;">макс. {{ group.level }} ур.×0.75</span>
+									<span style="display:block;">макс.</span>
 								</span>
 							  </span>
 							</td>
@@ -252,8 +251,7 @@ function handleEnterKey(event) {
 						  {% for key in ['strength','defense','dexterity','mastery','vitality'] %}
 							{% set s = b.stats[key] %}
 							<td class="tight" style="text-align:center; white-space:nowrap; line-height:1.15;">
-							  <span style="display:block">{{ s.upper15 }}</span>
-							  <span style="display:block;">{{ s.cap75 }}</span>
+							  <span style="display:block;">{{ s.best }}</span>
 							</td>
 						  {% endfor %}
 						</tr>

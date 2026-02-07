@@ -255,15 +255,6 @@ function handleEnterKey(event) {
 							</td>
 						  {% endfor %}
 						</tr>
-
-						{% if b.count < 20 %}
-						  <tr>
-							<td></td>
-							<td colspan="6" style="text-align:left; padding:4px 0; font-size:0.8em;">
-							  Баланс недоступен: на уровне {{ b.count }}<20 игроков.
-							</td>
-						  </tr>
-						{% endif %}
 					  </tbody>
 					{% endif %}
 

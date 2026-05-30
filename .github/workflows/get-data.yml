@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: get-player-data-main
+  cancel-in-progress: false
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -16,6 +20,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
       - name: Setup Python
@@ -35,6 +40,20 @@ jobs:
         run: |
           python get_data.py
 
+      - name: Save latest snapshot as artifact backup
+        id: latest_snapshot
+        run: |
+          latest_snapshot="$(find data -maxdepth 1 -type f -name 'heroes_*.json.gz' -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2- || true)"
+          echo "path=$latest_snapshot" >> "$GITHUB_OUTPUT"
+
+      - name: Upload latest snapshot artifact
+        if: steps.latest_snapshot.outputs.path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-snapshot
+          path: ${{ steps.latest_snapshot.outputs.path }}
+          retention-days: 7
+
       - name: Build/Update SQLite DB (last 40 snapshots + best30)
         run: |
           python tools/build_db.py --data-dir data --db-path data/db/ratings.sqlite --keep 40 --best-window-days 30
@@ -45,18 +64,39 @@ jobs:
           git config user.email "github-actions@github.com"
 
           if [ ! -f .gitignore ]; then touch .gitignore; fi
+
           grep -qxF "data/db/*.sqlite" .gitignore || echo "data/db/*.sqlite" >> .gitignore
           grep -qxF "data/db/ratings.sqlite" .gitignore || echo "data/db/ratings.sqlite" >> .gitignore
-          git add .gitignore
 
+          git add .gitignore
           git add data/ .github/workflows/get-data.yml || true
+
+          git restore --staged -- data/db/*.sqlite data/db/ratings.sqlite 2>/dev/null || true
 
           if git diff --cached --quiet; then
             echo "No snapshot changes to commit."
-          else
-            git commit -m "auto: update snapshots"
-            git push origin HEAD:main
+            exit 0
           fi
+
+          git commit -m "auto: update snapshots"
+
+          for attempt in 1 2 3; do
+            echo "Push attempt $attempt..."
+
+            git fetch origin main
+            git rebase origin/main
+
+            if git push origin HEAD:main; then
+              echo "Push successful."
+              exit 0
+            fi
+
+            echo "Push failed, retrying..."
+            sleep 5
+          done
+
+          echo "Push failed after 3 attempts."
+          exit 1
 
       - name: Upload ratings.sqlite to GitHub Release (db-latest)
         uses: ncipollo/release-action@v1
@@ -76,4 +116,5 @@ jobs:
             echo "RENDER_DEPLOY_HOOK_URL secret not set; skipping deploy trigger."
             exit 0
           fi
+
           curl -fsSL -X GET "$RENDER_DEPLOY_HOOK_URL"

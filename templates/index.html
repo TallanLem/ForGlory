@@ -110,17 +110,6 @@
           {% endif %}
         </div>
 
-        {% if mode != 'Лучшие (приросты)' and diff_hours %}
-          <div class="period-note">
-            ({% if mode == 'Общий' %}+{% endif %}прирост за {{ diff_hours }}
-            {{
-              'час' if diff_hours % 10 == 1 and diff_hours % 100 != 11 else
-              'часа' if diff_hours % 10 in [2,3,4] and diff_hours % 100 not in [12,13,14] else
-              'часов'
-            }})
-          </div>
-        {% endif %}
-
         <div class="controls-row row-inline">
           <select name="param" onchange="submitWithLoading(this.form)">
             {% for p in param_selectable %}
@@ -153,7 +142,7 @@
     </div>
 
     {% if mode == 'Лучшие (приросты)' %}
-      <p class="compact-note">Лучшие суточные приросты за последние 30 дней. Пропуски более 26 часов не учитываются.</p>
+      <p class="compact-note">Лучшие суточные приросты за последние 30 дней.</p>
       {% set blocks = best_by_param | selectattr('param', 'equalto', param) | list %}
       {% set block = blocks[0] if blocks else None %}
       {% if block and block.rating %}

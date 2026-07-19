@@ -322,10 +322,10 @@ tbody tr:nth-child(odd) {
 .player-level {
   flex: 0 0 auto;
   margin-left: 2px;
-  font-size: 0.78em;
-  line-height: 0;
+  font-size: 0.72em;
+  line-height: 1;
   position: relative;
-  top: -0.32em;
+  top: -0.38em;
   vertical-align: baseline;
 }
 
@@ -339,10 +339,11 @@ sup {
 .date-sup,
 .best-date {
   margin-left: 3px;
-  font-size: 0.78em;
-  line-height: 0;
+  color: var(--muted-color);
+  font-size: 0.72em;
+  line-height: 1;
   position: relative;
-  top: -0.28em;
+  top: -0.38em;
   vertical-align: baseline;
 }
 

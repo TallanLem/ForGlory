@@ -152,7 +152,6 @@ def load_ids_from_db(db_path: Path) -> tuple[list[int], set[int], int | None]:
             highest = int(highest_row[0]) if highest_row else None
             return known, baseline, highest
 
-        # Legacy release database fallback.
         if "heroes" in tables:
             known = [int(row[0]) for row in conn.execute("SELECT DISTINCT pid FROM heroes ORDER BY pid")]
             latest = conn.execute("SELECT id FROM snapshots ORDER BY ts DESC LIMIT 1").fetchone()
@@ -228,6 +227,7 @@ async def _request_text(
     stage: str,
     retries: int,
 ) -> tuple[str | None, str | None, FetchFailure | None]:
+    error: FetchFailure | None = None
     for attempt in range(1, retries + 1):
         try:
             async with session.get(url, allow_redirects=True) as response:
@@ -250,7 +250,7 @@ async def _request_text(
             error = _failure(pid, stage, "timeout", attempt)
         except aiohttp.ClientError as exc:
             error = _failure(pid, stage, "network_error", attempt, message=str(exc))
-        except Exception as exc:  # defensive: one malformed response must not kill the run
+        except Exception as exc:
             error = _failure(pid, stage, "unexpected_error", attempt, message=repr(exc))
         if attempt < retries:
             await asyncio.sleep((2 ** (attempt - 1)) + random.random())
@@ -292,7 +292,6 @@ async def fetch_hero(
                 _failure(hero_id, "profile", "parse_error", retries, message=str(exc)),
             )
 
-        # Achievements are optional. A failure here never discards a valid profile.
         achievement_failure: FetchFailure | None = None
         achievement_text, _achievement_final_url, achievement_failure = await _request_text(
             session, achievement_url, hero_id, "achievements", max(1, retries - 1)
@@ -349,7 +348,7 @@ async def collect(
                 failures.append(item.failure)
             if item.achievement_failure:
                 achievement_failures.append(item.achievement_failure)
-            if completed % 250 == 0 or completed == len(tasks):
+            if completed % 1000 == 0 or completed == len(tasks):
                 LOG.info(
                     "Progress %s/%s: profiles=%s, failed=%s, achievement warnings=%s",
                     completed,
@@ -370,7 +369,6 @@ def save_snapshot(
     probe_start: int,
     probe_end: int,
 ) -> tuple[Path, Path]:
-    # Original project stores Moscow time in filenames. Keep that convention for UI continuity.
     captured = datetime.now(timezone.utc) + timedelta(hours=3)
     timestamp = captured.strftime("%Y-%m-%d_%H-%M-%S")
     snapshot_path = DATA_DIR / f"heroes_{timestamp}.json.gz"

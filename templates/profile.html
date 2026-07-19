@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Личная статистика — For Glory!</title>
+  <link rel="icon" href="{{ url_for('static', filename='icons/favicon.png') }}" type="image/x-icon">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script>
+    if (localStorage.getItem("theme") === "dark") {
+      document.documentElement.classList.add("dark");
+    }
+  </script>
+</head>
+<body>
+  <div id="page-loading-overlay" class="page-loading-overlay" aria-hidden="true">
+    <div class="page-loading-box" role="status" aria-live="polite">
+      <span class="page-loading-spinner" aria-hidden="true"></span>
+      <span id="page-loading-text">Собираю статистику…</span>
+    </div>
+  </div>
+
+  <main class="container profile-page">
+    <div class="topbar">
+      <nav class="mode-toggle profile-nav" aria-label="Разделы рейтинга">
+        <a href="{{ url_for('index', mode='Общий') }}">Общий</a>
+        <a href="{{ url_for('index', mode='Прирост') }}">Прирост</a>
+        <a href="{{ url_for('index', mode='Лучшие (приросты)') }}" class="tab-two-line">
+          <span>Лучшие</span><small>приросты</small>
+        </a>
+        <a href="{{ url_for('profile') }}" class="profile-tab active" title="Личная статистика" aria-label="Личная статистика">👤</a>
+      </nav>
+      <button id="theme-toggle" class="theme-toggle" title="Сменить тему" aria-label="Сменить тему">🌙</button>
+    </div>
+
+    <section class="profile-panel">
+      <form method="GET" id="profile-form" class="profile-form" onsubmit="showLoading('Собираю статистику…')">
+        <div class="profile-search-row">
+          <input
+            type="text"
+            name="nickname"
+            id="profile-nickname"
+            value="{{ nickname }}"
+            placeholder="Ник или ID игрока"
+            list="profile-nicknames"
+            autocomplete="off"
+            required
+            data-resolved-name="{{ player.name if player else '' }}"
+          >
+          <datalist id="profile-nicknames"></datalist>
+        </div>
+
+        <div class="profile-date-row">
+          <label for="profile-file1">от</label>
+          <select name="file1" id="profile-file1" {% if not player_dates %}disabled{% endif %}>
+            {% if player_dates %}
+              {% for item in player_dates %}
+                <option value="{{ item.filename }}" {% if item.filename == file1 %}selected{% endif %}>
+                  {{ extract_datetime_from_filename(item.filename).strftime('%d.%m.%Y %H:%M') }}
+                </option>
+              {% endfor %}
+            {% else %}
+              <option>сначала введите ник</option>
+            {% endif %}
+          </select>
+
+          <label for="profile-file2">до</label>
+          <select name="file2" id="profile-file2" {% if not player_dates %}disabled{% endif %}>
+            {% if player_dates %}
+              {% for item in player_dates %}
+                <option value="{{ item.filename }}" {% if item.filename == file2 %}selected{% endif %}>
+                  {{ extract_datetime_from_filename(item.filename).strftime('%d.%m.%Y %H:%M') }}
+                </option>
+              {% endfor %}
+            {% else %}
+              <option>сначала введите ник</option>
+            {% endif %}
+          </select>
+
+          <button type="submit" class="collect-button">Собрать</button>
+        </div>
+      </form>
+
+      {% if error %}
+        <div class="profile-message error-message">{{ error }}</div>
+      {% elif not nickname %}
+        <div class="profile-message">Введите ник или ID. После этого появятся только те даты, в которых у игрока есть наблюдение.</div>
+      {% endif %}
+    </section>
+
+    {% if stats %}
+      <section class="profile-result">
+        <div class="profile-heading">
+          <div>
+            <a href="https://playwekings.mobi/hero/detail?player={{ stats.pid }}" target="_blank" rel="noopener" class="profile-player-name">{{ stats.name }}</a>
+            <span class="profile-meta">ID {{ stats.pid }}{% if stats.level is not none %} · уровень {{ stats.level }}{% endif %}</span>
+          </div>
+          <div class="profile-period">
+            {{ extract_datetime_from_filename(stats.file1).strftime('%d.%m.%Y') }} — {{ extract_datetime_from_filename(stats.file2).strftime('%d.%m.%Y') }}
+          </div>
+        </div>
+
+        <div class="personal-table-wrap">
+          <table class="personal-stats-table">
+            <thead>
+              <tr>
+                <th>Показатель</th>
+                <th>Было</th>
+                <th>Стало</th>
+                <th>Прирост<br><small>(место)</small></th>
+                <th>Общее<br><small>место</small></th>
+                <th>Лучшее за 30 дней</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in stats.rows %}
+                <tr>
+                  <td data-label="Показатель">{{ row.param }}</td>
+                  <td data-label="Было">{{ format_int(row.start) }}</td>
+                  <td data-label="Стало">{{ format_int(row.end) }}</td>
+                  <td data-label="Прирост (место)">
+                    {% if row.delta is not none %}
+                      <span class="{{ 'positive' if row.delta > 0 else 'negative' if row.delta < 0 else '' }}">{{ format_delta(row.delta) }}</span>
+                      {% if row.growth_rank is not none %}<span class="rank-bracket">({{ row.growth_rank }})</span>{% endif %}
+                    {% else %}—{% endif %}
+                  </td>
+                  <td data-label="Общее место">{{ row.overall_rank if row.overall_rank is not none else '—' }}</td>
+                  <td data-label="Лучшее за 30 дней">
+                    {% if row.best_diff is not none %}
+                      <span class="{{ 'positive' if row.best_diff > 0 else 'negative' if row.best_diff < 0 else '' }}">{{ format_delta(row.best_diff) }}</span>
+                      {% if row.best_snapshot %}<small class="best-date">{{ extract_datetime_from_filename(row.best_snapshot).strftime('%d.%m') }}</small>{% endif %}
+                    {% else %}—{% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="profile-footnote">Место в приросте считается только среди игроков, у которых есть данные в обе выбранные даты. Отсутствующее предыдущее значение не заменяется нулём.</p>
+      </section>
+    {% endif %}
+  </main>
+
+  <script>
+    function showLoading(message = "Загрузка…") {
+      const overlay = document.getElementById("page-loading-overlay");
+      const text = document.getElementById("page-loading-text");
+      if (text) text.textContent = message;
+      overlay?.classList.add("active");
+      overlay?.setAttribute("aria-hidden", "false");
+    }
+
+    function hideLoading() {
+      const overlay = document.getElementById("page-loading-overlay");
+      overlay?.classList.remove("active");
+      overlay?.setAttribute("aria-hidden", "true");
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const root = document.documentElement;
+      const toggle = document.getElementById("theme-toggle");
+      const dark = localStorage.getItem("theme") === "dark";
+      root.classList.toggle("dark", dark);
+      if (toggle) toggle.textContent = dark ? "☀️" : "🌙";
+      toggle?.addEventListener("click", () => {
+        const nextDark = !root.classList.contains("dark");
+        root.classList.toggle("dark", nextDark);
+        localStorage.setItem("theme", nextDark ? "dark" : "light");
+        toggle.textContent = nextDark ? "☀️" : "🌙";
+      });
+
+      const input = document.getElementById("profile-nickname");
+      const datalist = document.getElementById("profile-nicknames");
+      const date1 = document.getElementById("profile-file1");
+      const date2 = document.getElementById("profile-file2");
+      const resolved = (input?.dataset.resolvedName || "").trim().toLocaleLowerCase("ru-RU");
+      let timer = null;
+
+      input?.addEventListener("input", () => {
+        clearTimeout(timer);
+        const value = input.value.trim();
+        datalist.innerHTML = "";
+
+        if (resolved && value.toLocaleLowerCase("ru-RU") !== resolved) {
+          if (date1) date1.disabled = true;
+          if (date2) date2.disabled = true;
+        }
+
+        if (value.length < 2) return;
+        timer = setTimeout(async () => {
+          try {
+            const response = await fetch(`/api/player_suggest_all?q=${encodeURIComponent(value)}`);
+            const names = await response.json();
+            names.forEach((name) => {
+              const option = document.createElement("option");
+              option.value = name;
+              datalist.appendChild(option);
+            });
+          } catch (error) {
+            console.error(error);
+          }
+        }, 180);
+      });
+
+      document.addEventListener("click", (event) => {
+        const link = event.target.closest?.("a");
+        if (!link || link.target === "_blank" || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        const href = link.getAttribute("href");
+        if (!href || href.startsWith("#")) return;
+        const target = new URL(link.href, window.location.href);
+        if (target.origin === window.location.origin) showLoading("Загрузка…");
+      });
+    });
+
+    window.addEventListener("pageshow", hideLoading);
+  </script>
+</body>
+</html>

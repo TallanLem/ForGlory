@@ -1,613 +1,437 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <script>
-async function searchByNickname() {
-  const input = document.getElementById("scroll-nick");
-  const query = input ? input.value.trim() : "";
-  if (!query) return;
-  const form = document.querySelector("form.form-container");
-  const params = new URLSearchParams(new FormData(form));
-  params.set("q", query);
-  try {
-    const response = await fetch(`/api/player_search?${params.toString()}`, {headers: {"Accept": "application/json"}});
-    const data = await response.json();
-    if (!response.ok || !data.results || !data.results.length) {
-      alert("Игрок не найден для выбранных дат и фильтров.");
-      return;
-    }
-    window.location.href = data.results[0].url;
-  } catch (error) {
-    console.error(error);
-    alert("Ошибка поиска игрока.");
-  }
-}
-function handleEnterKey(event) {
-  if (event.key === "Enter") {
-    event.preventDefault();
-    searchByNickname();
-  }
-}
-
-    if (localStorage.getItem('theme') === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  </script>
-
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>For Glory!</title>
   <link rel="icon" href="{{ url_for('static', filename='icons/favicon.png') }}" type="image/x-icon">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script>
+    if (localStorage.getItem("theme") === "dark") {
+      document.documentElement.classList.add("dark");
+    }
+  </script>
 </head>
 <body>
-  <div class="container">
-    <form method="GET" class="form-container">
-      <input type="hidden" name="page" value="1">
-      <div class="mode-toggle">
-        <input type="radio" id="tab1" name="mode" value="Общий"
-               onchange="this.form.submit()" {{ 'checked' if mode == 'Общий' else '' }}>
-        <label for="tab1">Общий</label>
+  {% macro pagination_bar(pagination) -%}
+    <div class="pagination-controls">
+      {% if pagination.prev_url %}
+        <a href="{{ pagination.prev_url }}" class="page-nav">← Назад</a>
+      {% else %}
+        <span class="page-nav disabled">← Назад</span>
+      {% endif %}
 
-        <input type="radio" id="tab2" name="mode" value="Прирост"
-               onchange="this.form.submit()" {{ 'checked' if mode == 'Прирост' else '' }}>
-        <label for="tab2">Прирост</label>
+      <form method="GET" class="page-jump-form" onsubmit="showLoading('Загрузка…')">
+        {% for key, value in request.args.items() if key != 'page' %}
+          <input type="hidden" name="{{ key }}" value="{{ value }}">
+        {% endfor %}
+        <span>Страница</span>
+        <input
+          class="page-number-input"
+          type="number"
+          name="page"
+          min="1"
+          max="{{ pagination.total_pages }}"
+          value="{{ pagination.page }}"
+          inputmode="numeric"
+          aria-label="Номер страницы"
+        >
+        <button class="page-jump-button" type="submit" title="Перейти на страницу" aria-label="Перейти на страницу">→</button>
+        <span>из {{ pagination.total_pages }} · {{ pagination.total_rows }} игроков</span>
+      </form>
 
-        <input type="radio" id="tab3" name="mode" value="Лучшие (приросты)"
-               onchange="this.form.submit()" {{ 'checked' if mode == 'Лучшие (приросты)' else '' }}>
-        <label for="tab3" class="tab-two-line"
-			   style="display:inline-flex;flex-direction:column;align-items:center;line-height:1.1;">
-		  <span class="tab-main">Лучшие</span>
-		  <span class="tab-sub" style="font-size:12px;opacity:.85;margin-top:-2px;display:block;">приросты</span>
-		</label>
-      </div>
+      {% if pagination.next_url %}
+        <a href="{{ pagination.next_url }}" class="page-nav">Вперёд →</a>
+      {% else %}
+        <span class="page-nav disabled">Вперёд →</span>
+      {% endif %}
+    </div>
+  {%- endmacro %}
 
-      <div class="date-select">
-        {% if mode == 'Прирост' %}
-          <div class="row-inline">
-            <label>от</label>
-            <select name="file1" onchange="this.form.submit()">
+  <div id="page-loading-overlay" class="page-loading-overlay" aria-hidden="true">
+    <div class="page-loading-box" role="status" aria-live="polite">
+      <span class="page-loading-spinner" aria-hidden="true"></span>
+      <span id="page-loading-text">Загрузка…</span>
+    </div>
+  </div>
+
+  <main class="container">
+    <div class="topbar">
+      <form method="GET" class="form-container" id="ratings-form">
+        <input type="hidden" name="page" value="1">
+
+        <div class="mode-toggle">
+          <input type="radio" id="tab-overall" name="mode" value="Общий"
+                 onchange="submitWithLoading(this.form)" {{ 'checked' if mode == 'Общий' else '' }}>
+          <label for="tab-overall">Общий</label>
+
+          <input type="radio" id="tab-growth" name="mode" value="Прирост"
+                 onchange="submitWithLoading(this.form)" {{ 'checked' if mode == 'Прирост' else '' }}>
+          <label for="tab-growth">Прирост</label>
+
+          <input type="radio" id="tab-best" name="mode" value="Лучшие (приросты)"
+                 onchange="submitWithLoading(this.form)" {{ 'checked' if mode == 'Лучшие (приросты)' else '' }}>
+          <label for="tab-best" class="tab-two-line">
+            <span>Лучшие</span>
+            <small>приросты</small>
+          </label>
+
+          <a href="{{ url_for('profile') }}" class="profile-tab" title="Личная статистика" aria-label="Личная статистика">👤</a>
+        </div>
+
+        <div class="date-select">
+          {% if mode == 'Прирост' %}
+            <div class="row-inline date-range-row">
+              <label for="file1">от</label>
+              <select name="file1" id="file1" onchange="submitWithLoading(this.form)">
+                {% for f in json_files %}
+                  <option value="{{ f }}" {% if f == file1 %}selected{% endif %}>
+                    {{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
+                  </option>
+                {% endfor %}
+              </select>
+              <label for="file2">до</label>
+              <select name="file2" id="file2" onchange="submitWithLoading(this.form)">
+                {% for f in json_files %}
+                  <option value="{{ f }}" {% if f == file2 %}selected{% endif %}>
+                    {{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+          {% elif mode != 'Лучшие (приросты)' %}
+            <select name="file" onchange="submitWithLoading(this.form)">
               {% for f in json_files %}
-                <option value="{{ f }}" {% if f == file1 %}selected{% endif %}>
+                <option value="{{ f }}" {% if f == selected_file %}selected{% endif %}>
                   {{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
                 </option>
               {% endfor %}
             </select>
-            <label>до</label>
-            <select name="file2" onchange="this.form.submit()">
-              {% for f in json_files %}
-                <option value="{{ f }}" {% if f == file2 %}selected{% endif %}>
-                  {{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
-                </option>
-              {% endfor %}
-            </select>
-          </div>
-        {% elif mode == 'Лучшие (приросты)' %}
-          <!-- Выбор дат скрыт -->
-        {% else %}
-          <select name="file" onchange="this.form.submit()">
-            {% for f in json_files %}
-              <option value="{{ f }}" {% if f == selected_file %}selected{% endif %}>
-                {{ extract_datetime_from_filename(f).strftime('%d.%m.%Y %H:%M') }}
-              </option>
-            {% endfor %}
-          </select>
-        {% endif %}
-      </div>
+          {% endif %}
+        </div>
 
-      {% if mode != 'Лучшие (приросты)' %}
-        {% if diff_hours %}
-          <div style="font-size: 0.9em; color: #888; margin-top: -5px; margin-bottom: 6px;">
+        {% if mode != 'Лучшие (приросты)' and diff_hours %}
+          <div class="period-note">
             ({% if mode == 'Общий' %}+{% endif %}прирост за {{ diff_hours }}
             {{
-              ' час' if diff_hours % 10 == 1 and diff_hours % 100 != 11 else
-              ' часа' if diff_hours % 10 in [2,3,4] and diff_hours % 100 not in [12,13,14] else
-              ' часов'
+              'час' if diff_hours % 10 == 1 and diff_hours % 100 != 11 else
+              'часа' if diff_hours % 10 in [2,3,4] and diff_hours % 100 not in [12,13,14] else
+              'часов'
             }})
           </div>
         {% endif %}
-      {% endif %}
 
-      <div class="controls-row row-inline">
-        <select name="param" onchange="this.form.submit()">
-          {% for p in param_selectable %}
-            <option value="{{ p }}" {% if p == param %}selected{% endif %}>{{ p }}</option>
-          {% endfor %}
-        </select>
-      </div>
-		{% if not (param == "По уровню" or param.startswith("Братства") or param.startswith("Кланы")) %}
-				<div class="filter-row search-row">
-				  <input type="text" id="scroll-nick" list="nicknames" placeholder="Поиск по нику"
-						 class="search-input"
-						 onkeydown="handleEnterKey(event)">
-				  <datalist id="nicknames"></datalist>
-				  <button type="button" onclick="searchByNickname()" class="search-btn">🔍</button>
-				</div>
-
-		
-				<div class="controls-row row-inline" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-				  <label for="level-select" style="white-space: nowrap;">Уровень:</label>
-				  <select name="level" id="level-select" onchange="this.form.submit()" style="padding: 4px 6px;">
-					<option value="Все"
-					  {% if selected_level is not defined
-							or selected_level is none
-							or selected_level == ''
-							or selected_level == 'Все' %}selected{% endif %}>
-					  Все
-					</option>
-					{% for lvl in all_levels|reverse %}
-					  <option value="{{ lvl }}"
-						{% if selected_level is defined and (selected_level|string) == (lvl|string) %}selected{% endif %}>
-						{{ lvl }}
-					  </option>
-					{% endfor %}
-				  </select>
-				</div>
-		{% endif %}
-
-    </form>
-
-    <button id="theme-toggle" class="theme-toggle"
-            style="position: absolute; right: 0; top: 0; font-size: 24px;">
-      🌙
-    </button>
-
-    {% if mode == 'Лучшие (приросты)' %}
-		  <div style="font-size:0.7em; color:#666; margin:4px 0 10px;">
-			<p>
-			  Лучшие суточные приросты за последние {{ 30 }} дней.<br>
-			  Пропуски более 26&nbsp;часов не учитываются.
-			</p>
-		  </div>
-	
-      {% set blocks = best_by_param | selectattr('param', 'equalto', param) | list %}
-      {% set block = blocks[0] if blocks|length > 0 else None %}
-      {% if block and block.rating and block.rating|length > 0 %}
-        <table class="rating-table">
-          <thead>
-            <tr>
-              <th style="width:40px; text-align:center;">№</th>
-              <th style="text-align:left;">Игрок</th>
-              <th style="text-align:left;">{{ block.param }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for idx, row in enumerate(block.rating, page_start + 1) %}
-              <tr id="player-{{ row[0] }}" data-nickname="{{ row[1]|lower }}" {% if highlight_pid == row[0] %}style="background:rgba(255,215,0,0.2);outline:2px solid gold;"{% endif %}>
-                <td style="width:40px; text-align:center;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
-                <td style="text-align:left;">
-					<a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank"
-					   style="display:inline-flex; width:100%; overflow:hidden; min-width:0; align-items:baseline;">
-					  <span style="min-width:0; max-width:18ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
-						{{ row[1] }}
-					  </span>
-					  <span style="margin-left:6px; font-size:0.75em; position:relative; top:-0.45em;">
-						{{ row[2] }}
-					  </span>
-					</a>
-                </td>
-					<td style="text-align:left;">
-					  {{ row[3] if row[3] is not none else '—' }}
-					  {% if row[4] %}
-						<sup style="font-size:0.6em; margin-left:2px; opacity:.7">
-						  {{ extract_datetime_from_filename(row[4]).strftime('%d.%m') }}
-						</sup>
-					  {% endif %}
-					</td>
-              </tr>
+        <div class="controls-row row-inline">
+          <select name="param" onchange="submitWithLoading(this.form)">
+            {% for p in param_selectable %}
+              <option value="{{ p }}" {% if p == param %}selected{% endif %}>{{ p }}</option>
             {% endfor %}
-          </tbody>
-        </table>
-        {% if pagination and pagination.total_pages > 1 %}
-          <div class="pagination-controls">
-            {% if pagination.prev_url %}<a href="{{ pagination.prev_url }}">← Назад</a>{% endif %}
-            <span>Страница {{ pagination.page }} из {{ pagination.total_pages }} · {{ pagination.total_rows }} игроков</span>
-            {% if pagination.next_url %}<a href="{{ pagination.next_url }}">Вперёд →</a>{% endif %}
+          </select>
+        </div>
+
+        {% if not (param == 'По уровню' or param.startswith('Братства') or param.startswith('Кланы')) %}
+          <div class="filter-row search-row">
+            <input type="text" id="scroll-nick" list="nicknames" placeholder="Поиск по нику"
+                   class="search-input" autocomplete="off" onkeydown="handleSearchEnter(event)">
+            <datalist id="nicknames"></datalist>
+            <button type="button" onclick="searchByNickname()" class="search-btn" aria-label="Найти игрока">🔍</button>
+          </div>
+
+          <div class="controls-row level-row">
+            <label for="level-select">Уровень:</label>
+            <select name="level" id="level-select" onchange="submitWithLoading(this.form)">
+              <option value="Все" {% if selected_level in [None, '', 'Все'] %}selected{% endif %}>Все</option>
+              {% for lvl in all_levels|reverse %}
+                <option value="{{ lvl }}" {% if selected_level|string == lvl|string %}selected{% endif %}>{{ lvl }}</option>
+              {% endfor %}
+            </select>
           </div>
         {% endif %}
-      {% else %}
-        <div style="opacity:.7;">Нет данных для параметра «{{ param }}».</div>
-      {% endif %}
-    {% endif %}
+      </form>
 
-    {% if param == "По уровню" and mode == "Общий" %}
-		<div style="margin:8px 0 6px; font-weight:600;">
-		  Всего {{ totals.count }} {% if totals.delta %}
-			<span style="font-size:0.75em; position:relative; top:-0.45em; color: {{ 'green' if totals.delta > 0 else 'red' }};">
-			  {% if totals.delta > 0 %}+{{ totals.delta }}{% else %}{{ totals.delta }}{% endif %}
-			</span>
-		  {% endif %}
-		   игроков
-		</div>
-      <tbody>
-        {% for group in level_ratings %}
-        <tr>
-          <td colspan="3">
-            <details>
-				{% set d = group.count_delta if group.count_delta is defined else 0 %}
-				<summary>Уровень {{ group.level }} [{{ group.count }}{% if d %}<span style="margin-left:4px;font-size:0.75em;position:relative;top:-0.45em;color:{{ 'green' if d > 0 else 'red' }};">{% if d > 0 %}+{{ d }}{% else %}{{ d }}{% endif %}</span>{% endif %}]</summary>
+      <button id="theme-toggle" class="theme-toggle" title="Сменить тему" aria-label="Сменить тему">🌙</button>
+    </div>
 
-              <div class="details">
-                <table class="inner-table" style="table-layout:auto; width:100%; max-width:480px; font-size:0.8em;">
-                  <thead>
-					  <tr>
-						<th style="text-align:center;">№</th>
-						<th class="wide-name" style="text-align:left;">Ник</th>
-						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/strength.png') }}" alt="strength" class="icon"></th>
-						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/defense.png') }}" alt="defense" class="icon"></th>
-						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/dexterity.png') }}" alt="dexterity" class="icon"></th>
-						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/mastery.png') }}" alt="mastery" class="icon"></th>
-						<th class="tight" style="text-align:center;"><img src="{{ url_for('static', filename='icons/vitality.png') }}" alt="vitality" class="icon"></th>
-					  </tr>
-					</thead>
-					
-					{% set b = (balance_map.get(group.level) if balance_map is defined else None) %}
-					{% if b and b.stats %}
-					  <tbody>
-						<tr>
-						  <td class="tight" style="text-align:center;">⚖</td>
-
-							<td class="wide-name" style="text-align:left; font-weight:600; white-space:nowrap;">
-							  <span style="display:flex; width:100%; align-items:center; gap:8px;">
-									<span>Баланс</span>
-
-									<span style="margin-left:auto; font-weight:400; font-size:0.9em; line-height:1.15;padding-right:4px; text-align:right; white-space:normal;">
-									<span style="display:block;">макс.</span>
-								</span>
-							  </span>
-							</td>
-							
-						  {% for key in ['strength','defense','dexterity','mastery','vitality'] %}
-							{% set s = b.stats[key] %}
-							<td class="tight" style="text-align:center; white-space:nowrap; line-height:1.15;">
-							  <span style="display:block;">{{ s.best }}</span>
-							</td>
-						  {% endfor %}
-						</tr>
-					  </tbody>
-					{% endif %}
-
-
-					<tbody id="lvl-{{ group.level }}-tbody"
-						   data-snapshot="{{ file }}"
-						   data-level="{{ group.level }}"
-						   data-page="0">
-					</tbody>
-
-                </table>
-
-                <div class="level-controls" style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-					<button type="button"
-							class="load-more-btn"
-							data-level="{{ group.level }}"
-							style="padding:6px 10px; border-radius:8px; border:1px solid #999;
-								   background:rgba(255,255,255,.06);
-								   color:#cfcfcf;
-								   cursor:pointer; display:none;">
-					  Показать ещё
-					</button>
-                  <span class="load-status" data-level="{{ group.level }}" style="opacity:.85; color:#bdbdbd;"></span>
-
-                </div>
-              </div>
-            </details>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    {% endif %}
-
-    {% if mode != 'Лучшие (приросты)' %}
-      <table class="rating-table">
-        <thead>
-          {% if param != "По уровню" %}
-          <tr>
-            <th style="width:40px; text-align:center;">№</th>
-            <th style="text-align:left;">{{ column2_name }}</th>
-            <th class="tight" style="text-align:left;">{{ column3_name }}</th>
-          </tr>
-          {% endif %}
-        </thead>
-        <tbody>
-          {% if param.startswith('Кланы') or param.startswith('Братства') %}
-            {% for idx, row in enumerate(rating, 1) %}
-              <tr>
-                <td style="text-align:center; padding:0 6px; white-space:nowrap;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
-                <td>
-                  <details>
-					<summary style="display:inline-flex; width:100%; overflow:hidden; align-items:baseline;">
-					  <span style="
-							min-width:0;
-							max-width:20ch;
-							white-space:nowrap;
-							overflow:hidden;
-							text-overflow:ellipsis;
-							display:inline-block;
-						  ">
-						{{ row.name }}&nbsp;
-					  </span>
-
-					  <span style="white-space:nowrap;">
-						[{{ row.members|length }}{% if row.count_delta and row.count_delta != 0 %}
-						  <span style="font-size:0.75em; position:relative; top:-0.45em; color: {{ 'green' if row.count_delta > 0 else 'red' }};">
-							{% if row.count_delta > 0 %}+{{ row.count_delta }}{% else %}{{ row.count_delta }}{% endif %}
-						  </span>
-						{% endif %}]
-					  </span>
-					</summary>
-
-					
-                    <div class="details">
-                      <table class="inner-table" style="table-layout: auto; width: 100%; font-size:0.8em">
-						  <colgroup>
-							<col style="width:auto;">
-							<col style="width:52%;">
-							<col style="width:auto;">
-						  </colgroup>
-						{% for hero in row.members %}
-						  {% set hname  = hero.get('Имя') or hero.get('name') %}
-						  {% set hid    = hero.get('ID')  or hero.get('id')  or hero.get('pid') %}
-						  {% set hlevel = hero.get('Уровень') or hero.get('level') %}
-						  {% set hscore = hero.get('value') %}
-						  {% set hrank  = hero.get('_rank', loop.index) %}
-						  {% set hdelta = hero.get('delta') %}
-
-							<tr data-nickname="{{ (hname or '')|lower|e }}">
-							  <td style="text-align:left;">{{ hrank }}</td>
-
-							  <td style="width:auto">
-								<a href="https://playwekings.mobi/hero/detail?player={{ hid }}" target="_blank"
-								   style="display:inline-flex; width:100%; overflow:hidden; min-width:0; flex-wrap:nowrap; white-space:nowrap; align-items:center;">
-								  <span style="min-width:0; max-width:15ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block;">
-									{{ hname }}
-								  </span>
-								  <span style="white-space:nowrap; font-size:0.75em; display:inline-block; transform:translateY(-0.35em); line-height:1;">
-									{{ hlevel }}
-								  </span>
-								</a>
-
-							  </td>
-
-							  <td class="tight" style="text-align:left; padding-left:5px; flex-wrap:nowrap; white-space:nowrap">
-								{{ hscore }}
-								{% if hdelta is not none and hdelta != 0 %}
-								  <sup style="color: {{ 'green' if hdelta > 0 else 'red' }}; font-size:0.8em;">
-									{% if hdelta > 0 %}+{{ hdelta }}{% elif hdelta < 0 %}{{ hdelta }}{% endif %}
-								  </sup>
-								{% endif %}
-							  </td>
-							</tr>
-
-						{% endfor %}
-                      </table>
-                    </div>
-                  </details>
-                </td>
-				
-				<td class="tight" style="text-align:left; padding-left:4px; white-space:nowrap;">
-				  {% set rdelta = row.get('delta') %}
-				  {{ row.score }}{% if rdelta is not none and rdelta != 0 %}<span style="font-size:0.75em; display:inline-block; transform:translateY(-0.35em); line-height:1; color: {{ 'green' if rdelta > 0 else 'red' }};">{% if rdelta > 0 %}+{{ rdelta }}{% else %}{{ rdelta }}{% endif %}</span>{% endif %}
-				</td>
-
-              </tr>
-            {% endfor %}
-          {% else %}
-            {% for idx, row in enumerate(rating, page_start + 1) %}
-				{% set ID = row[0] %}
-				{% set name = row[1] %}
-				{% set level = row[2] %}
-				{% set value = row[3] %}
-		
-              <tr id="player-{{ ID }}" data-nickname="{{ name|lower|e }}" {% if highlight_pid == ID %}style="background:rgba(255,215,0,0.2);outline:2px solid gold;"{% endif %}>
-                <td style="width:30px; text-align:center;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
-                <td class="wide-name">
-					<a href="https://playwekings.mobi/hero/detail?player={{ ID }}" target="_blank"
-					   style="display:inline-flex; width:100%; overflow:hidden; min-width:0; align-items:baseline;">
-					  <span style="min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
-						{{ name }}
-					  </span>
-					<span style="white-space:nowrap; font-size:0.75em; display:inline-block; transform:translateY(-0.35em); line-height:1;">
-					  {{ level }}
-					</span>
-					</a>
-                </td>
-				<td style="text-align:left;">
-				  {{ value if value is not none else '—' }}
-				  {% if mode == "Общий" and row[4] is not none and row[4] != 0 %}
-					<span style="color: {{ 'green' if row[4] > 0 else 'red' }}; font-size:0.75em; display:inline-block; transform:translateY(-0.35em); line-height:1;">
-					  {{ '+' if row[4] > 0 else '-' }}{{ row[4] }}
-					</span>
-				  {% endif %}
-				  {% if mode != "Общий" and row[4] is not none %}
-					<span style="color:#888; font-size:0.75em; display:inline-block; transform:translateY(-0.35em); line-height:1;">
-					  {{ row[4] }} ⚔
-					</span>
-				  {% endif %}
-				</td>
-              </tr>
-            {% endfor %}
-          {% endif %}
-        </tbody>
-      </table>
-      {% if pagination and pagination.total_pages > 1 and not (param.startswith('Кланы') or param.startswith('Братства') or param == 'По уровню') %}
-        <div class="pagination-controls">
-          {% if pagination.prev_url %}<a href="{{ pagination.prev_url }}">← Назад</a>{% endif %}
-          <span>Страница {{ pagination.page }} из {{ pagination.total_pages }} · {{ pagination.total_rows }} игроков</span>
-          {% if pagination.next_url %}<a href="{{ pagination.next_url }}">Вперёд →</a>{% endif %}
+    {% if mode == 'Лучшие (приросты)' %}
+      <p class="compact-note">Лучшие суточные приросты за последние 30 дней. Пропуски более 26 часов не учитываются.</p>
+      {% set blocks = best_by_param | selectattr('param', 'equalto', param) | list %}
+      {% set block = blocks[0] if blocks else None %}
+      {% if block and block.rating %}
+        <div class="table-wrap">
+          <table class="rating-table">
+            <thead>
+              <tr><th>№</th><th>Игрок</th><th>{{ block.param }}</th></tr>
+            </thead>
+            <tbody>
+              {% for idx, row in enumerate(block.rating, page_start + 1) %}
+                <tr id="player-{{ row[0] }}" data-nickname="{{ row[1]|lower|e }}" class="{{ 'highlight-row' if highlight_pid == row[0] else '' }}">
+                  <td>{{ '🥇' if idx == 1 else '🥈' if idx == 2 else '🥉' if idx == 3 else idx }}</td>
+                  <td class="wide-name">
+                    <a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank" rel="noopener">
+                      <span class="name-ellipsis">{{ row[1] }}</span><sup>{{ row[2] }}</sup>
+                    </a>
+                  </td>
+                  <td>{{ format_int(row[3]) }}{% if row[4] %}<small class="date-sup">{{ extract_datetime_from_filename(row[4]).strftime('%d.%m') }}</small>{% endif %}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
+        {% if pagination and pagination.total_pages > 1 %}{{ pagination_bar(pagination) }}{% endif %}
+      {% else %}
+        <div class="empty-state">Нет данных для параметра «{{ param }}».</div>
       {% endif %}
     {% endif %}
-  </div>
-  
+
+    {% if param == 'По уровню' and mode == 'Общий' %}
+      <div class="total-line">
+        Всего {{ totals.count }}
+        {% if totals.delta %}<sup class="{{ 'positive' if totals.delta > 0 else 'negative' }}">{{ format_delta(totals.delta) }}</sup>{% endif %}
+        игроков
+      </div>
+      <div class="level-list">
+        {% for group in level_ratings %}
+          <details class="level-card">
+            <summary>
+              Уровень {{ group.level }} [{{ group.count }}{% if group.count_delta %}<sup class="{{ 'positive' if group.count_delta > 0 else 'negative' }}">{{ format_delta(group.count_delta) }}</sup>{% endif %}]
+            </summary>
+            <div class="details table-wrap">
+              <table class="inner-table level-table">
+                <thead>
+                  <tr>
+                    <th>№</th><th>Ник</th>
+                    <th><img src="{{ url_for('static', filename='icons/strength.png') }}" alt="Сила" class="icon"></th>
+                    <th><img src="{{ url_for('static', filename='icons/defense.png') }}" alt="Защита" class="icon"></th>
+                    <th><img src="{{ url_for('static', filename='icons/dexterity.png') }}" alt="Ловкость" class="icon"></th>
+                    <th><img src="{{ url_for('static', filename='icons/mastery.png') }}" alt="Мастерство" class="icon"></th>
+                    <th><img src="{{ url_for('static', filename='icons/vitality.png') }}" alt="Живучесть" class="icon"></th>
+                  </tr>
+                </thead>
+                {% set b = balance_map.get(group.level) if balance_map is defined else None %}
+                {% if b and b.stats %}
+                  <tbody>
+                    <tr class="balance-row">
+                      <td>⚖</td><td>Баланс</td>
+                      {% for key in ['strength','defense','dexterity','mastery','vitality'] %}<td>{{ b.stats[key].best }}</td>{% endfor %}
+                    </tr>
+                  </tbody>
+                {% endif %}
+                <tbody id="lvl-{{ group.level }}-tbody" data-snapshot="{{ file }}" data-level="{{ group.level }}" data-page="0"></tbody>
+              </table>
+              <div class="level-controls">
+                <button type="button" class="load-more-btn" data-level="{{ group.level }}">Показать ещё</button>
+                <span class="load-status" data-level="{{ group.level }}"></span>
+              </div>
+            </div>
+          </details>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if mode != 'Лучшие (приросты)' and not (param == 'По уровню' and mode == 'Общий') %}
+      <div class="table-wrap">
+        <table class="rating-table {{ 'group-table' if param.startswith('Кланы') or param.startswith('Братства') else '' }}">
+          <thead>
+            <tr><th>№</th><th>{{ column2_name }}</th><th>{{ column3_name }}</th></tr>
+          </thead>
+          <tbody>
+            {% if param.startswith('Кланы') or param.startswith('Братства') %}
+              {% for idx, row in enumerate(rating, 1) %}
+                <tr>
+                  <td>{{ '🥇' if idx == 1 else '🥈' if idx == 2 else '🥉' if idx == 3 else idx }}</td>
+                  <td>
+                    <details class="group-details">
+                      <summary><span class="name-ellipsis">{{ row.name }}</span> [{{ row.members|length }}{% if row.count_delta %}<sup class="{{ 'positive' if row.count_delta > 0 else 'negative' }}">{{ format_delta(row.count_delta) }}</sup>{% endif %}]</summary>
+                      <div class="details table-wrap">
+                        <table class="inner-table">
+                          <tbody>
+                            {% for hero in row.members %}
+                              <tr data-nickname="{{ (hero.name or '')|lower|e }}">
+                                <td>{{ hero._rank }}</td>
+                                <td class="wide-name"><a href="https://playwekings.mobi/hero/detail?player={{ hero.pid }}" target="_blank" rel="noopener"><span class="name-ellipsis">{{ hero.name }}</span><sup>{{ hero.level }}</sup></a></td>
+                                <td>{{ format_int(hero.value) }}{% if hero.delta is not none and hero.delta != 0 %}<sup class="{{ 'positive' if hero.delta > 0 else 'negative' }}">{{ format_delta(hero.delta) }}</sup>{% endif %}</td>
+                              </tr>
+                            {% endfor %}
+                          </tbody>
+                        </table>
+                      </div>
+                    </details>
+                  </td>
+                  <td>{{ format_int(row.score) }}{% if row.delta %}<sup class="{{ 'positive' if row.delta > 0 else 'negative' }}">{{ format_delta(row.delta) }}</sup>{% endif %}</td>
+                </tr>
+              {% endfor %}
+            {% else %}
+              {% for idx, row in enumerate(rating, page_start + 1) %}
+                <tr id="player-{{ row[0] }}" data-nickname="{{ row[1]|lower|e }}" class="{{ 'highlight-row' if highlight_pid == row[0] else '' }}">
+                  <td>{{ '🥇' if idx == 1 else '🥈' if idx == 2 else '🥉' if idx == 3 else idx }}</td>
+                  <td class="wide-name">
+                    <a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank" rel="noopener"><span class="name-ellipsis">{{ row[1] }}</span><sup>{{ row[2] }}</sup></a>
+                  </td>
+                  <td>
+                    {{ format_int(row[3]) }}
+                    {% if mode == 'Общий' and row[4] is not none and row[4] != 0 %}<sup class="{{ 'positive' if row[4] > 0 else 'negative' }}">{{ format_delta(row[4]) }}</sup>{% endif %}
+                    {% if mode != 'Общий' and row[4] is not none %}<sup class="muted">{{ row[4] }} ⚔</sup>{% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+      {% if pagination and pagination.total_pages > 1 and not (param.startswith('Кланы') or param.startswith('Братства')) %}{{ pagination_bar(pagination) }}{% endif %}
+    {% endif %}
+  </main>
+
   <script>
-	  function toggleHelp(btn, id) {
-		const el = document.getElementById(id);
-		const isOpen = el.style.display !== 'none';
-
-		// Закрыть все остальные подсказки
-		document.querySelectorAll('[id^="bal_"]').forEach(x => { x.style.display = 'none'; });
-
-		// Открыть/закрыть текущую
-		el.style.display = isOpen ? 'none' : 'block';
-		btn.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
-	  }
-
-	  // Закрывать подсказки по клику вне
-	  document.addEventListener('click', function (e) {
-		const isHelp = e.target.closest && e.target.closest('button[aria-controls^="bal_"], span[id^="bal_"]');
-		if (!isHelp) {
-		  document.querySelectorAll('[id^="bal_"]').forEach(x => { x.style.display = 'none'; });
-		  document.querySelectorAll('button[aria-controls^="bal_"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
-		}
-	  });
-	</script>
-
-
-  <script>
-          document.addEventListener("DOMContentLoaded", () => {
-		// Переключение темы
-		const toggleButton = document.getElementById("theme-toggle");
-		const root = document.documentElement;
-		const isDark = () => root.classList.contains("dark");
-		const savedTheme = localStorage.getItem("theme");
-
-		if (!savedTheme) {
-		  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-		  root.classList.toggle("dark", prefersDark);
-		  localStorage.setItem("theme", prefersDark ? "dark" : "light");
-		  if (toggleButton) toggleButton.textContent = prefersDark ? "☀️" : "🌙";
-		} else {
-		  root.classList.toggle("dark", savedTheme === "dark");
-		  if (toggleButton) toggleButton.textContent = savedTheme === "dark" ? "☀️" : "🌙";
-		}
-
-		toggleButton?.addEventListener("click", () => {
-		  const next = isDark() ? "light" : "dark";
-		  root.classList.toggle("dark", next === "dark");
-		  localStorage.setItem("theme", next);
-		  toggleButton.textContent = next === "dark" ? "☀️" : "🌙";
-		});
-            // Подсказки берутся из БД по всей выбранной дате, не только с текущей страницы.
-            const input = document.getElementById("scroll-nick");
-            const datalist = document.getElementById("nicknames");
-            let suggestTimer = null;
-            input?.addEventListener("input", () => {
-              clearTimeout(suggestTimer);
-              const val = input.value.trim();
-              datalist.innerHTML = "";
-              if (val.length < 2) return;
-              suggestTimer = setTimeout(async () => {
-                const form = document.querySelector("form.form-container");
-                const formData = new FormData(form);
-                const snapshot = formData.get("file2") || formData.get("file") || {{ (json_files[0] if json_files else '')|tojson }};
-                try {
-                  const response = await fetch(`/api/player_suggest?snapshot=${encodeURIComponent(snapshot)}&q=${encodeURIComponent(val)}`);
-                  const names = await response.json();
-                  names.forEach(name => {
-                    const option = document.createElement("option");
-                    option.value = name;
-                    datalist.appendChild(option);
-                  });
-                } catch (error) {
-                  console.error(error);
-                }
-              }, 180);
-            });
-
-            const highlighted = document.getElementById("player-{{ highlight_pid or '' }}");
-            highlighted?.scrollIntoView({behavior: "smooth", block: "center"});
-          });
-	  
-	  // Переключаем вид общей суммы/прироста при раскрытии/сворачивании details
-		document.querySelectorAll('td > details').forEach((d) => {
-		  const tr = d.closest('tr');
-		  if (!tr) return;
-		  const totalInline = tr.querySelector('.total-inline');
-		  const totalStacked = tr.querySelector('.total-stacked');
-		  if (!totalInline || !totalStacked) return;
-
-		  const sync = () => {
-			const open = d.open;
-			totalInline.style.display = open ? 'none' : 'inline-block';
-			totalStacked.style.display = open ? 'inline-block' : 'none';
-		  };
-		  d.addEventListener('toggle', sync);
-		  // первичная синхронизация (на случай, если какие-то details открыты по умолчанию)
-		  sync();
-		});
-	</script>
-
-
-<script>
-(function () {
-  async function fetchLevelPlayers(snapshotId, level, page, pageSize) {
-    const url = `/api/level_players?snapshot_id=${encodeURIComponent(snapshotId)}&level=${encodeURIComponent(level)}&page=${encodeURIComponent(page)}&page_size=${encodeURIComponent(pageSize)}`;
-    const res = await fetch(url, { headers: { "Accept": "application/json" } });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    return await res.json();
-  }
-
-  function getTbody(level) {
-    return document.getElementById(`lvl-${level}-tbody`);
-  }
-
-  async function loadLevel(level, append) {
-    const tbody = getTbody(level);
-    if (!tbody) return;
-
-    const snapshotId = tbody.dataset.snapshot;
-    const pageSize = 100;
-    const currentPage = parseInt(tbody.dataset.page || "0", 10);
-    const nextPage = append ? (currentPage + 1) : 1;
-
-    const status = document.querySelector(`.load-status[data-level="${level}"]`);
-    const btn = document.querySelector(`.load-more-btn[data-level="${level}"]`);
-
-    try {
-      if (status) status.textContent = "Загрузка…";
-      const data = await fetchLevelPlayers(snapshotId, level, nextPage, pageSize);
-
-      if (!append) {
-        tbody.innerHTML = data.rows_html || "";
-      } else {
-        tbody.insertAdjacentHTML("beforeend", data.rows_html || "");
-      }
-
-      tbody.dataset.page = String(nextPage);
-
-      if (btn) {
-        btn.style.display = data.has_more ? "inline-block" : "none";
-      }
-      if (status) status.textContent = data.has_more ? "" : "Конец списка";
-    } catch (e) {
-      if (status) status.textContent = "Ошибка загрузки";
-      console.error(e);
+    function showLoading(message = "Загрузка…") {
+      const overlay = document.getElementById("page-loading-overlay");
+      const text = document.getElementById("page-loading-text");
+      if (text) text.textContent = message;
+      overlay?.classList.add("active");
+      overlay?.setAttribute("aria-hidden", "false");
     }
-  }
 
-  // Load first page on <details> open
-  document.querySelectorAll("details").forEach((d) => {
-    d.addEventListener("toggle", () => {
-      if (!d.open) return;
-      const tbody = d.querySelector("tbody[id^='lvl-'][data-level]");
-      if (!tbody) return;
-      const level = tbody.dataset.level;
-      const page = parseInt(tbody.dataset.page || "0", 10);
-      if (page === 0) loadLevel(level, false);
+    function hideLoading() {
+      const overlay = document.getElementById("page-loading-overlay");
+      overlay?.classList.remove("active");
+      overlay?.setAttribute("aria-hidden", "true");
+    }
+
+    function submitWithLoading(form, message = "Загрузка…") {
+      if (!form) return;
+      showLoading(message);
+      window.setTimeout(() => form.submit(), 0);
+    }
+
+    async function searchByNickname() {
+      const input = document.getElementById("scroll-nick");
+      const query = input ? input.value.trim() : "";
+      if (!query) return;
+      const form = document.getElementById("ratings-form");
+      const params = new URLSearchParams(new FormData(form));
+      params.set("q", query);
+      showLoading("Поиск…");
+      try {
+        const response = await fetch(`/api/player_search?${params.toString()}`, {headers: {"Accept": "application/json"}});
+        const data = await response.json();
+        if (!response.ok || !data.results || !data.results.length) {
+          hideLoading();
+          alert("Игрок не найден для выбранных дат и фильтров.");
+          return;
+        }
+        window.location.href = data.results[0].url;
+      } catch (error) {
+        hideLoading();
+        console.error(error);
+        alert("Ошибка поиска игрока.");
+      }
+    }
+
+    function handleSearchEnter(event) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        searchByNickname();
+      }
+    }
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const root = document.documentElement;
+      const toggle = document.getElementById("theme-toggle");
+      const dark = localStorage.getItem("theme") === "dark";
+      root.classList.toggle("dark", dark);
+      if (toggle) toggle.textContent = dark ? "☀️" : "🌙";
+      toggle?.addEventListener("click", () => {
+        const nextDark = !root.classList.contains("dark");
+        root.classList.toggle("dark", nextDark);
+        localStorage.setItem("theme", nextDark ? "dark" : "light");
+        toggle.textContent = nextDark ? "☀️" : "🌙";
+      });
+
+      const input = document.getElementById("scroll-nick");
+      const datalist = document.getElementById("nicknames");
+      let suggestTimer = null;
+      input?.addEventListener("input", () => {
+        clearTimeout(suggestTimer);
+        const value = input.value.trim();
+        datalist.innerHTML = "";
+        if (value.length < 2) return;
+        suggestTimer = setTimeout(async () => {
+          const formData = new FormData(document.getElementById("ratings-form"));
+          const snapshot = formData.get("file2") || formData.get("file") || {{ (json_files[0] if json_files else '')|tojson }};
+          try {
+            const response = await fetch(`/api/player_suggest?snapshot=${encodeURIComponent(snapshot)}&q=${encodeURIComponent(value)}`);
+            const names = await response.json();
+            names.forEach((name) => {
+              const option = document.createElement("option");
+              option.value = name;
+              datalist.appendChild(option);
+            });
+          } catch (error) {
+            console.error(error);
+          }
+        }, 180);
+      });
+
+      document.querySelectorAll("form").forEach((form) => {
+        if (form.classList.contains("page-jump-form")) {
+          form.addEventListener("submit", () => showLoading("Загрузка…"));
+        }
+      });
+      document.addEventListener("click", (event) => {
+        const link = event.target.closest?.("a");
+        if (!link || link.target === "_blank" || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        const href = link.getAttribute("href");
+        if (!href || href.startsWith("#") || href.startsWith("javascript:")) return;
+        const target = new URL(link.href, window.location.href);
+        if (target.origin === window.location.origin) showLoading("Загрузка…");
+      });
+
+      const highlighted = document.getElementById("player-{{ highlight_pid or '' }}");
+      highlighted?.scrollIntoView({behavior: "smooth", block: "center"});
+
+      document.querySelectorAll("details.level-card").forEach((details) => {
+        details.addEventListener("toggle", () => {
+          if (!details.open) return;
+          const tbody = details.querySelector("tbody[id^='lvl-'][data-level]");
+          if (!tbody || parseInt(tbody.dataset.page || "0", 10) !== 0) return;
+          loadLevel(tbody.dataset.level, false);
+        });
+      });
+
+      document.addEventListener("click", (event) => {
+        const button = event.target.closest(".load-more-btn");
+        if (button) loadLevel(button.dataset.level, true);
+      });
     });
-  });
 
-  // Load more
-  document.addEventListener("click", (ev) => {
-    const btn = ev.target.closest(".load-more-btn");
-    if (!btn) return;
-    const level = btn.dataset.level;
-    loadLevel(level, true);
-  });
-})();
-</script>
+    window.addEventListener("pageshow", hideLoading);
 
+    async function loadLevel(level, append) {
+      const tbody = document.getElementById(`lvl-${level}-tbody`);
+      if (!tbody) return;
+      const currentPage = parseInt(tbody.dataset.page || "0", 10);
+      const nextPage = append ? currentPage + 1 : 1;
+      const status = document.querySelector(`.load-status[data-level="${level}"]`);
+      const button = document.querySelector(`.load-more-btn[data-level="${level}"]`);
+      if (status) status.textContent = "Загрузка…";
+      if (button) button.disabled = true;
+      try {
+        const url = `/api/level_players?snapshot_id=${encodeURIComponent(tbody.dataset.snapshot)}&level=${encodeURIComponent(level)}&page=${nextPage}&page_size=100`;
+        const response = await fetch(url, {headers: {"Accept": "application/json"}});
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        if (append) tbody.insertAdjacentHTML("beforeend", data.rows_html || "");
+        else tbody.innerHTML = data.rows_html || "";
+        tbody.dataset.page = String(nextPage);
+        if (button) button.style.display = data.has_more ? "inline-block" : "none";
+        if (status) status.textContent = data.has_more ? "" : "Конец списка";
+      } catch (error) {
+        if (status) status.textContent = "Ошибка загрузки";
+        console.error(error);
+      } finally {
+        if (button) button.disabled = false;
+      }
+    }
+  </script>
 </body>
 </html>

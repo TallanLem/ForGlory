@@ -5,7 +5,10 @@ import math
 import os
 import re
 import sqlite3
+from collections import OrderedDict
 from datetime import datetime
+from functools import wraps
+from threading import RLock
 from urllib.parse import urlencode
 
 from flask import Flask, g, jsonify, render_template, request, send_from_directory, url_for
@@ -28,6 +31,7 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DB_PATH = os.environ.get("DB_PATH", os.path.join(DATA_DIR, "db", "ratings.sqlite"))
 PAGE_SIZE = max(10, min(500, int(os.environ.get("PAGE_SIZE", "100"))))
 LEVEL_PAGE_SIZE = max(10, min(500, int(os.environ.get("LEVEL_PAGE_SIZE", "100"))))
+QUERY_CACHE_SIZE = max(32, min(2048, int(os.environ.get("QUERY_CACHE_SIZE", "384"))))
 DATETIME_RE = re.compile(r"heroes_(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})")
 
 stat_keys = ["Сила", "Защита", "Ловкость", "Мастерство", "Живучесть"]
@@ -38,10 +42,19 @@ param_options = [
     "Награбил (кристаллы)", "Потерял (кристаллы)",
     "Братства по славе", "Братства по статам", "Кланы по славе", "Кланы по статам",
 ]
+PERSONAL_PARAMS = [
+    "Слава", "Побед", "Поражений", "Побед над Драконом", "Побед над Змеем", "Убито зверей",
+    "Сила", "Защита", "Ловкость", "Мастерство", "Живучесть", "Сумма статов",
+    "Награбил (серебро)", "Потерял (серебро)",
+    "Награбил (кристаллы)", "Потерял (кристаллы)",
+]
 PARAM_EXCLUDE_BY_MODE = {
     "Прирост": {"По уровню", "Кланы по славе", "Кланы по статам", "Братства по славе", "Братства по статам"},
     "Лучшие (приросты)": {"По уровню", "Кланы по славе", "Кланы по статам", "Братства по славе", "Братства по статам"},
 }
+
+_QUERY_CACHE: OrderedDict[tuple, object] = OrderedDict()
+_QUERY_CACHE_LOCK = RLock()
 
 
 @app.template_global()
@@ -54,6 +67,25 @@ def extract_datetime_from_filename(filename: str) -> datetime:
     )
 
 
+@app.template_global()
+def format_int(value: int | None) -> str:
+    if value is None:
+        return "—"
+    return f"{int(value):,}".replace(",", " ")
+
+
+@app.template_global()
+def format_delta(value: int | None) -> str:
+    if value is None:
+        return "—"
+    number = format_int(abs(int(value)))
+    if value > 0:
+        return f"+{number}"
+    if value < 0:
+        return f"−{number}"
+    return "0"
+
+
 def params_for_mode(mode: str, all_params: list[str]) -> list[str]:
     banned = PARAM_EXCLUDE_BY_MODE.get(mode, set())
     return [param for param in all_params if param not in banned]
@@ -63,16 +95,52 @@ def _db_available() -> bool:
     return os.path.exists(DB_PATH)
 
 
+def _db_signature() -> tuple[str, int, int]:
+    path = os.path.abspath(DB_PATH)
+    try:
+        stat = os.stat(path)
+        return path, int(stat.st_mtime_ns), int(stat.st_size)
+    except OSError:
+        return path, 0, 0
+
+
+def cached_query(function):
+    @wraps(function)
+    def wrapper(*args, **kwargs):
+        key = (
+            function.__name__,
+            _db_signature(),
+            args,
+            tuple(sorted(kwargs.items())),
+        )
+        with _QUERY_CACHE_LOCK:
+            if key in _QUERY_CACHE:
+                value = _QUERY_CACHE.pop(key)
+                _QUERY_CACHE[key] = value
+                return value
+
+        value = function(*args, **kwargs)
+
+        with _QUERY_CACHE_LOCK:
+            _QUERY_CACHE[key] = value
+            while len(_QUERY_CACHE) > QUERY_CACHE_SIZE:
+                _QUERY_CACHE.popitem(last=False)
+        return value
+
+    return wrapper
+
+
 def get_db() -> sqlite3.Connection:
     if "db" not in g:
         uri = f"file:{os.path.abspath(DB_PATH)}?mode=ro"
         conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only=ON")
-        conn.execute("PRAGMA cache_size=-8192")
-        conn.execute("PRAGMA temp_store=FILE")
-        conn.execute("PRAGMA mmap_size=0")
-        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA cache_size=-32768")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA mmap_size=134217728")
+        conn.execute("PRAGMA busy_timeout=10000")
+        conn.execute("PRAGMA automatic_index=ON")
         g.db = conn
     return g.db
 
@@ -84,16 +152,30 @@ def close_db(_exc) -> None:
         conn.close()
 
 
+@cached_query
 def list_snapshot_ids() -> list[str]:
     rows = get_db().execute("SELECT filename FROM snapshots ORDER BY ts DESC").fetchall()
     return [str(row["filename"]) for row in rows]
 
 
-def snapshot_ts(filename: str | None) -> int | None:
+@cached_query
+def snapshot_info(filename: str | None) -> tuple[int, int] | None:
     if not filename:
         return None
-    row = get_db().execute("SELECT ts FROM snapshots WHERE filename=?", (filename,)).fetchone()
-    return int(row[0]) if row else None
+    row = get_db().execute(
+        "SELECT snapshot_id,ts FROM snapshots WHERE filename=?", (filename,)
+    ).fetchone()
+    return (int(row["snapshot_id"]), int(row["ts"])) if row else None
+
+
+def snapshot_num(filename: str | None) -> int | None:
+    info = snapshot_info(filename)
+    return info[0] if info else None
+
+
+def snapshot_ts(filename: str | None) -> int | None:
+    info = snapshot_info(filename)
+    return info[1] if info else None
 
 
 def prev_snapshot_id(current_id: str, ids_desc: list[str]) -> str | None:
@@ -104,11 +186,15 @@ def prev_snapshot_id(current_id: str, ids_desc: list[str]) -> str | None:
     return ids_desc[index + 1] if index + 1 < len(ids_desc) else None
 
 
+@cached_query
 def all_levels_for_snapshot(snapshot_id: str) -> list[int]:
+    sid = snapshot_num(snapshot_id)
+    if sid is None:
+        return []
     rows = get_db().execute(
-        "SELECT DISTINCT level FROM heroes WHERE snapshot_id=? AND visible=1 "
+        "SELECT DISTINCT level FROM observations WHERE snapshot_id=? "
         "AND level IS NOT NULL ORDER BY level",
-        (snapshot_id,),
+        (sid,),
     ).fetchall()
     return [int(row["level"]) for row in rows]
 
@@ -126,6 +212,7 @@ def _level_clause(alias: str, level: int | None) -> tuple[str, list[int]]:
     return f" AND {alias}.level=?", [level]
 
 
+@cached_query
 def query_rating_overall(
     snapshot_id: str,
     prev_id: str | None,
@@ -134,40 +221,50 @@ def query_rating_overall(
     limit: int,
     offset: int,
 ) -> tuple[list[tuple], int]:
+    current_sid = snapshot_num(snapshot_id)
+    previous_sid = snapshot_num(prev_id)
+    if current_sid is None:
+        return [], 0
+
     db = get_db()
     current_value = _player_value_expr(param, "c")
     previous_value = _player_value_expr(param, "p")
     level_sql, level_args = _level_clause("c", level)
     count = int(
         db.execute(
-            f"SELECT COUNT(*) FROM heroes c WHERE c.snapshot_id=? AND c.visible=1{level_sql}",
-            [snapshot_id, *level_args],
+            f"SELECT COUNT(*) FROM observations c WHERE c.snapshot_id=?{level_sql}",
+            [current_sid, *level_args],
         ).fetchone()[0]
     )
-    if prev_id:
+
+    if previous_sid is not None:
         rows = db.execute(
             f"""
-            SELECT c.pid,c.name,c.level,{current_value} AS value,
-                   CASE WHEN p.pid IS NULL THEN NULL ELSE ({current_value}-{previous_value}) END AS delta
-            FROM heroes c
-            LEFT JOIN heroes p ON p.snapshot_id=? AND p.pid=c.pid
-            WHERE c.snapshot_id=? AND c.visible=1{level_sql}
+            SELECT c.pid,n.value AS name,c.level,{current_value} AS value,
+                   CASE WHEN p.pid IS NULL THEN NULL
+                        ELSE ({current_value}-{previous_value}) END AS delta
+            FROM observations c
+            LEFT JOIN observations p ON p.snapshot_id=? AND p.pid=c.pid
+            LEFT JOIN text_values n ON n.text_id=c.name_id
+            WHERE c.snapshot_id=?{level_sql}
             ORDER BY value DESC,c.pid ASC
             LIMIT ? OFFSET ?
             """,
-            [prev_id, snapshot_id, *level_args, limit, offset],
+            [previous_sid, current_sid, *level_args, limit, offset],
         ).fetchall()
     else:
         rows = db.execute(
             f"""
-            SELECT c.pid,c.name,c.level,{current_value} AS value,NULL AS delta
-            FROM heroes c
-            WHERE c.snapshot_id=? AND c.visible=1{level_sql}
+            SELECT c.pid,n.value AS name,c.level,{current_value} AS value,NULL AS delta
+            FROM observations c
+            LEFT JOIN text_values n ON n.text_id=c.name_id
+            WHERE c.snapshot_id=?{level_sql}
             ORDER BY value DESC,c.pid ASC
             LIMIT ? OFFSET ?
             """,
-            [snapshot_id, *level_args, limit, offset],
+            [current_sid, *level_args, limit, offset],
         ).fetchall()
+
     return [
         (
             int(row["pid"]), row["name"], row["level"],
@@ -178,6 +275,7 @@ def query_rating_overall(
     ], count
 
 
+@cached_query
 def query_growth_between(
     snap_from: str,
     snap_to: str,
@@ -186,19 +284,25 @@ def query_growth_between(
     limit: int,
     offset: int,
 ) -> tuple[list[tuple], int]:
+    from_sid = snapshot_num(snap_from)
+    to_sid = snapshot_num(snap_to)
+    if from_sid is None or to_sid is None:
+        return [], 0
+
     db = get_db()
     current_value = _player_value_expr(param, "c")
     previous_value = _player_value_expr(param, "p")
     diff = f"({current_value}-{previous_value})"
     level_sql, level_args = _level_clause("c", level)
     common_where = (
-        f"c.snapshot_id=? AND p.snapshot_id=? AND c.visible=1{level_sql} "
+        f"c.snapshot_id=? AND p.snapshot_id=?{level_sql} "
         f"AND {current_value} IS NOT NULL AND {previous_value} IS NOT NULL"
     )
     count = int(
         db.execute(
-            f"SELECT COUNT(*) FROM heroes c JOIN heroes p ON p.pid=c.pid WHERE {common_where}",
-            [snap_to, snap_from, *level_args],
+            f"SELECT COUNT(*) FROM observations c JOIN observations p ON p.pid=c.pid "
+            f"WHERE {common_where}",
+            [to_sid, from_sid, *level_args],
         ).fetchone()[0]
     )
     extra = "NULL"
@@ -208,14 +312,15 @@ def query_growth_between(
         extra = f"CASE WHEN (c.losses-p.losses)>0 THEN ROUND(({diff})*1.0/(c.losses-p.losses)) END"
     rows = db.execute(
         f"""
-        SELECT c.pid,c.name,c.level,{diff} AS diff,{extra} AS extra
-        FROM heroes c
-        JOIN heroes p ON p.pid=c.pid
+        SELECT c.pid,n.value AS name,c.level,{diff} AS diff,{extra} AS extra
+        FROM observations c
+        JOIN observations p ON p.pid=c.pid
+        LEFT JOIN text_values n ON n.text_id=c.name_id
         WHERE {common_where}
         ORDER BY diff DESC,c.pid ASC
         LIMIT ? OFFSET ?
         """,
-        [snap_to, snap_from, *level_args, limit, offset],
+        [to_sid, from_sid, *level_args, limit, offset],
     ).fetchall()
     return [
         (
@@ -226,6 +331,7 @@ def query_growth_between(
     ], count
 
 
+@cached_query
 def query_group_overall(
     snapshot_id: str,
     prev_id: str | None,
@@ -233,89 +339,106 @@ def query_group_overall(
     score_param: str,
     level: int | None,
 ) -> list[dict]:
+    current_sid = snapshot_num(snapshot_id)
+    previous_sid = snapshot_num(prev_id)
+    if current_sid is None:
+        return []
+
     db = get_db()
-    gid_col, gname_col = ("clan_id", "clan") if group_kind == "Клан" else ("brotherhood_id", "brotherhood")
-    value = _player_value_expr(score_param, "h")
+    if group_kind == "Клан":
+        gid_col, gname_id_col = "clan_game_id", "clan_name_id"
+    else:
+        gid_col, gname_id_col = "brotherhood_game_id", "brotherhood_name_id"
+    current_value = _player_value_expr(score_param, "h")
     level_sql, level_args = _level_clause("h", level)
+
     current_rows = db.execute(
         f"""
-        SELECT h.pid,h.name,h.level,{value} AS value,h.{gid_col} AS gid,h.{gname_col} AS gname
-        FROM heroes h
-        WHERE h.snapshot_id=? AND h.visible=1 AND h.{gid_col} IS NOT NULL AND h.{gid_col}!=0
-          AND TRIM(COALESCE(h.{gname_col},''))!=''{level_sql}
+        SELECT h.pid,n.value AS name,h.level,{current_value} AS value,
+               h.{gid_col} AS gid,gn.value AS gname
+        FROM observations h
+        LEFT JOIN text_values n ON n.text_id=h.name_id
+        LEFT JOIN text_values gn ON gn.text_id=h.{gname_id_col}
+        WHERE h.snapshot_id=? AND h.{gid_col} IS NOT NULL AND h.{gid_col}!=0
+          AND TRIM(COALESCE(gn.value,''))!=''{level_sql}
         """,
-        [snapshot_id, *level_args],
+        [current_sid, *level_args],
     ).fetchall()
 
-    previous_groups: dict[int, dict] = {}
     previous_values: dict[int, int] = {}
-    if prev_id:
+    previous_group_counts: dict[int, int] = {}
+    if previous_sid is not None:
         previous_value = _player_value_expr(score_param, "h")
         previous_rows = db.execute(
             f"""
-            SELECT h.pid,{previous_value} AS value,h.{gid_col} AS gid,h.{gname_col} AS gname,h.visible
-            FROM heroes h
-            WHERE h.snapshot_id=? AND h.{gid_col} IS NOT NULL AND h.{gid_col}!=0
-              AND TRIM(COALESCE(h.{gname_col},''))!=''{level_sql}
+            SELECT h.pid,{previous_value} AS value,h.{gid_col} AS gid
+            FROM observations h
+            WHERE h.snapshot_id=? AND h.{gid_col} IS NOT NULL AND h.{gid_col}!=0{level_sql}
             """,
-            [prev_id, *level_args],
+            [previous_sid, *level_args],
         ).fetchall()
         for row in previous_rows:
-            if row["value"] is not None:
-                previous_values[int(row["pid"])] = int(row["value"])
-            if not row["visible"]:
-                continue
+            pid = int(row["pid"])
             gid = int(row["gid"])
-            group = previous_groups.setdefault(gid, {"name": row["gname"], "score": 0, "count": 0})
-            group["score"] += int(row["value"] or 0)
-            group["count"] += 1
+            if row["value"] is not None:
+                previous_values[pid] = int(row["value"])
+            previous_group_counts[gid] = previous_group_counts.get(gid, 0) + 1
 
     groups: dict[int, dict] = {}
     for row in current_rows:
         gid = int(row["gid"])
-        group = groups.setdefault(gid, {"name": row["gname"], "score": 0, "members": []})
+        group = groups.setdefault(
+            gid,
+            {"name": row["gname"] or str(gid), "score": 0, "delta": 0, "members": []},
+        )
         current = int(row["value"] or 0)
-        group["score"] += current
         previous = previous_values.get(int(row["pid"]))
+        member_delta = current - previous if previous is not None else None
+        group["score"] += current
+        if member_delta is not None:
+            group["delta"] += member_delta
         group["members"].append(
             {
                 "pid": int(row["pid"]), "name": row["name"], "level": row["level"],
-                "value": current, "delta": current - previous if previous is not None else None,
+                "value": current, "delta": member_delta,
             }
         )
 
     result = []
-    for gid in set(groups) | set(previous_groups):
-        current = groups.get(gid, {"name": previous_groups.get(gid, {}).get("name", str(gid)), "score": 0, "members": []})
-        previous = previous_groups.get(gid, {"score": 0, "count": 0})
-        members = sorted(current["members"], key=lambda item: item["value"], reverse=True)
+    for gid, group in groups.items():
+        members = sorted(group["members"], key=lambda item: (item["value"], -item["pid"]), reverse=True)
         for rank, member in enumerate(members, 1):
             member["_rank"] = rank
         result.append(
             {
-                "name": current.get("name") or previous.get("name") or str(gid),
-                "score": int(current.get("score", 0)),
-                "delta": int(current.get("score", 0)) - int(previous.get("score", 0)),
+                "name": group["name"],
+                "score": int(group["score"]),
+                "delta": int(group["delta"]),
                 "count": len(members),
-                "count_delta": len(members) - int(previous.get("count", 0)),
+                "count_delta": len(members) - previous_group_counts.get(gid, 0),
                 "members": members,
             }
         )
-    return sorted(result, key=lambda item: item["score"], reverse=True)
+    return sorted(result, key=lambda item: (item["score"], item["name"]), reverse=True)
 
 
+@cached_query
 def query_level_summaries(snapshot_id: str, prev_id: str | None) -> tuple[list[dict], dict]:
+    current_sid = snapshot_num(snapshot_id)
+    previous_sid = snapshot_num(prev_id)
+    if current_sid is None:
+        return [], {"count": 0, "prev_count": 0, "delta": 0}
     db = get_db()
     current_rows = db.execute(
-        "SELECT level,COUNT(*) cnt FROM heroes WHERE snapshot_id=? AND visible=1 "
+        "SELECT level,COUNT(*) cnt FROM observations WHERE snapshot_id=? "
         "AND level IS NOT NULL GROUP BY level",
-        (snapshot_id,),
+        (current_sid,),
     ).fetchall()
     previous_rows = db.execute(
-        "SELECT level,COUNT(*) cnt FROM heroes WHERE snapshot_id=? AND visible=1 "
+        "SELECT level,COUNT(*) cnt FROM observations WHERE snapshot_id=? "
         "AND level IS NOT NULL GROUP BY level",
-        (prev_id,),
-    ).fetchall() if prev_id else []
+        (previous_sid,),
+    ).fetchall() if previous_sid is not None else []
     current = {int(row["level"]): int(row["cnt"]) for row in current_rows}
     previous = {int(row["level"]): int(row["cnt"]) for row in previous_rows}
     groups = [
@@ -330,19 +453,23 @@ def query_level_summaries(snapshot_id: str, prev_id: str | None) -> tuple[list[d
 BALANCE_STATS = ("strength", "defense", "dexterity", "mastery", "vitality")
 
 
+@cached_query
 def query_level_balance(snapshot_id: str) -> dict[int, dict]:
+    sid = snapshot_num(snapshot_id)
+    if sid is None:
+        return {}
     db = get_db()
     select_stats = ",".join(f"AVG({column}) AS {column}" for column in BALANCE_STATS)
     max_stats = ",".join(f"MAX({column}) AS {column}" for column in BALANCE_STATS)
     averages = db.execute(
-        f"SELECT level,COUNT(*) cnt,{select_stats} FROM heroes WHERE snapshot_id=? AND visible=1 "
+        f"SELECT level,COUNT(*) cnt,{select_stats} FROM observations WHERE snapshot_id=? "
         "AND level IS NOT NULL GROUP BY level",
-        (snapshot_id,),
+        (sid,),
     ).fetchall()
     maxima = db.execute(
-        f"SELECT level,{max_stats} FROM heroes WHERE snapshot_id=? AND visible=1 "
+        f"SELECT level,{max_stats} FROM observations WHERE snapshot_id=? "
         "AND level IS NOT NULL GROUP BY level",
-        (snapshot_id,),
+        (sid,),
     ).fetchall()
     average_map = {int(row["level"]): dict(row) for row in averages}
     maximum_map = {int(row["level"]): dict(row) for row in maxima}
@@ -351,53 +478,72 @@ def query_level_balance(snapshot_id: str) -> dict[int, dict]:
         below = average_map.get(level - 1)
         maximum = maximum_map.get(level)
         if not below or not maximum:
-            result[level] = {"eligible": int(current["cnt"] or 0) >= 20, "count": int(current["cnt"] or 0), "stats": None}
+            result[level] = {
+                "eligible": int(current["cnt"] or 0) >= 20,
+                "count": int(current["cnt"] or 0),
+                "stats": None,
+            }
             continue
         stats = {}
         for column in BALANCE_STATS:
             upper15 = int(round(float(below.get(column) or 0) * 1.15))
             cap75 = int(round(float(maximum.get(column) or 0) * 0.75))
             stats[column] = {"upper15": upper15, "cap75": cap75, "best": min(upper15, cap75)}
-        result[level] = {"eligible": int(current["cnt"] or 0) >= 20, "count": int(current["cnt"] or 0), "stats": stats}
+        result[level] = {
+            "eligible": int(current["cnt"] or 0) >= 20,
+            "count": int(current["cnt"] or 0),
+            "stats": stats,
+        }
     return result
 
 
+@cached_query
 def query_level_players(snapshot_id: str, level: int, limit: int, offset: int) -> list[dict]:
+    sid = snapshot_num(snapshot_id)
+    if sid is None:
+        return []
     rows = get_db().execute(
         """
-        SELECT pid,name,strength,defense,dexterity,mastery,vitality
-        FROM heroes
-        WHERE snapshot_id=? AND visible=1 AND level=?
-        ORDER BY strength DESC,defense DESC,dexterity DESC,mastery DESC,vitality DESC,pid
+        SELECT o.pid,n.value AS name,o.strength,o.defense,o.dexterity,o.mastery,o.vitality
+        FROM observations o
+        LEFT JOIN text_values n ON n.text_id=o.name_id
+        WHERE o.snapshot_id=? AND o.level=?
+        ORDER BY o.strength DESC,o.defense DESC,o.dexterity DESC,o.mastery DESC,o.vitality DESC,o.pid
         LIMIT ? OFFSET ?
         """,
-        (snapshot_id, level, limit, offset),
+        (sid, level, limit, offset),
     ).fetchall()
     return [dict(row) for row in rows]
 
 
+@cached_query
 def query_best_growth(param: str, level: int | None, limit: int, offset: int) -> tuple[list[tuple], int]:
     db = get_db()
-    latest = db.execute("SELECT filename FROM snapshots ORDER BY ts DESC LIMIT 1").fetchone()
+    latest = db.execute("SELECT snapshot_id FROM snapshots ORDER BY ts DESC LIMIT 1").fetchone()
     if not latest:
         return [], 0
-    level_sql = " AND level=?" if level is not None else ""
+    latest_sid = int(latest[0])
+    level_sql = " AND bg.level=?" if level is not None else ""
     level_args = [level] if level is not None else []
     count = int(
         db.execute(
-            f"SELECT COUNT(*) FROM best30 WHERE best_for_snapshot_id=? AND param=?{level_sql}",
-            [latest[0], param, *level_args],
+            f"SELECT COUNT(*) FROM best_growth bg WHERE bg.best_for_snapshot_id=? "
+            f"AND bg.param=?{level_sql}",
+            [latest_sid, param, *level_args],
         ).fetchone()[0]
     )
     rows = db.execute(
         f"""
-        SELECT pid,name,level,diff,best_snapshot_id
-        FROM best30
-        WHERE best_for_snapshot_id=? AND param=?{level_sql}
-        ORDER BY diff DESC,pid ASC
+        SELECT bg.pid,n.value AS name,bg.level,bg.diff,s.filename AS best_snapshot_id
+        FROM best_growth bg
+        JOIN observations o ON o.snapshot_id=bg.best_snapshot_id AND o.pid=bg.pid
+        LEFT JOIN text_values n ON n.text_id=o.name_id
+        JOIN snapshots s ON s.snapshot_id=bg.best_snapshot_id
+        WHERE bg.best_for_snapshot_id=? AND bg.param=?{level_sql}
+        ORDER BY bg.diff DESC,bg.pid ASC
         LIMIT ? OFFSET ?
         """,
-        [latest[0], param, *level_args, limit, offset],
+        [latest_sid, param, *level_args, limit, offset],
     ).fetchall()
     return [
         (int(row["pid"]), row["name"], row["level"], int(row["diff"]), row["best_snapshot_id"])
@@ -408,10 +554,12 @@ def query_best_growth(param: str, level: int | None, limit: int, offset: int) ->
 def _pagination(page: int, total: int, base_args: dict[str, str]) -> dict:
     total_pages = max(1, math.ceil(total / PAGE_SIZE)) if total else 1
     page = min(max(page, 1), total_pages)
+
     def make_url(target: int) -> str:
         args = dict(base_args)
         args["page"] = str(target)
         return url_for("index") + "?" + urlencode(args)
+
     return {
         "page": page,
         "total_pages": total_pages,
@@ -421,69 +569,295 @@ def _pagination(page: int, total: int, base_args: dict[str, str]) -> dict:
     }
 
 
-def _search_ranked_overall(snapshot: str, prev: str | None, param: str, level: int | None, query: str) -> list[sqlite3.Row]:
+@cached_query
+def _search_ranked_overall(
+    snapshot: str,
+    prev: str | None,
+    param: str,
+    level: int | None,
+    query: str,
+) -> list[dict]:
+    current_sid = snapshot_num(snapshot)
+    previous_sid = snapshot_num(prev)
+    if current_sid is None:
+        return []
     current = _player_value_expr(param, "c")
     previous = _player_value_expr(param, "p")
     level_sql, level_args = _level_clause("c", level)
-    delta = f"CASE WHEN p.pid IS NULL THEN NULL ELSE ({current}-{previous}) END" if prev else "NULL"
-    join = "LEFT JOIN heroes p ON p.snapshot_id=? AND p.pid=c.pid" if prev else ""
-    args = [prev] if prev else []
-    args.extend([snapshot, *level_args, f"%{query.casefold()}%"])
-    return get_db().execute(
+    delta = f"CASE WHEN p.pid IS NULL THEN NULL ELSE ({current}-{previous}) END" if previous_sid is not None else "NULL"
+    join = "LEFT JOIN observations p ON p.snapshot_id=? AND p.pid=c.pid" if previous_sid is not None else ""
+    args: list[object] = [previous_sid] if previous_sid is not None else []
+    args.extend([current_sid, *level_args, f"%{query.casefold()}%", query.casefold()])
+    rows = get_db().execute(
         f"""
         WITH ranked AS (
-            SELECT c.pid,c.name,c.name_norm,c.level,{current} AS value,{delta} AS extra,
+            SELECT c.pid,n.value AS name,n.norm AS name_norm,c.level,{current} AS value,{delta} AS extra,
                    ROW_NUMBER() OVER(ORDER BY {current} DESC,c.pid ASC) AS rank
-            FROM heroes c {join}
-            WHERE c.snapshot_id=? AND c.visible=1{level_sql}
+            FROM observations c
+            {join}
+            LEFT JOIN text_values n ON n.text_id=c.name_id
+            WHERE c.snapshot_id=?{level_sql}
         )
         SELECT * FROM ranked WHERE name_norm LIKE ?
         ORDER BY CASE WHEN name_norm=? THEN 0 ELSE 1 END,rank LIMIT 20
         """,
-        [*args, query.casefold()],
+        args,
     ).fetchall()
+    return [dict(row) for row in rows]
 
 
-def _search_ranked_growth(snap_from: str, snap_to: str, param: str, level: int | None, query: str) -> list[sqlite3.Row]:
+@cached_query
+def _search_ranked_growth(
+    snap_from: str,
+    snap_to: str,
+    param: str,
+    level: int | None,
+    query: str,
+) -> list[dict]:
+    from_sid = snapshot_num(snap_from)
+    to_sid = snapshot_num(snap_to)
+    if from_sid is None or to_sid is None:
+        return []
     current = _player_value_expr(param, "c")
     previous = _player_value_expr(param, "p")
     diff = f"({current}-{previous})"
     level_sql, level_args = _level_clause("c", level)
-    return get_db().execute(
+    rows = get_db().execute(
         f"""
         WITH ranked AS (
-            SELECT c.pid,c.name,c.name_norm,c.level,{diff} AS value,NULL AS extra,
+            SELECT c.pid,n.value AS name,n.norm AS name_norm,c.level,{diff} AS value,NULL AS extra,
                    ROW_NUMBER() OVER(ORDER BY {diff} DESC,c.pid ASC) AS rank
-            FROM heroes c JOIN heroes p ON p.pid=c.pid AND p.snapshot_id=?
-            WHERE c.snapshot_id=? AND c.visible=1{level_sql}
+            FROM observations c
+            JOIN observations p ON p.pid=c.pid AND p.snapshot_id=?
+            LEFT JOIN text_values n ON n.text_id=c.name_id
+            WHERE c.snapshot_id=?{level_sql}
               AND {current} IS NOT NULL AND {previous} IS NOT NULL
         )
         SELECT * FROM ranked WHERE name_norm LIKE ?
         ORDER BY CASE WHEN name_norm=? THEN 0 ELSE 1 END,rank LIMIT 20
         """,
-        [snap_from, snap_to, *level_args, f"%{query.casefold()}%", query.casefold()],
+        [from_sid, to_sid, *level_args, f"%{query.casefold()}%", query.casefold()],
     ).fetchall()
+    return [dict(row) for row in rows]
 
 
-def _search_ranked_best(param: str, level: int | None, query: str) -> list[sqlite3.Row]:
-    latest = get_db().execute("SELECT filename FROM snapshots ORDER BY ts DESC LIMIT 1").fetchone()
+@cached_query
+def _search_ranked_best(param: str, level: int | None, query: str) -> list[dict]:
+    db = get_db()
+    latest = db.execute("SELECT snapshot_id FROM snapshots ORDER BY ts DESC LIMIT 1").fetchone()
     if not latest:
         return []
-    level_sql = " AND level=?" if level is not None else ""
+    level_sql = " AND bg.level=?" if level is not None else ""
     level_args = [level] if level is not None else []
-    return get_db().execute(
+    rows = db.execute(
         f"""
         WITH ranked AS (
-            SELECT pid,name,name_norm,level,diff AS value,best_snapshot_id AS extra,
-                   ROW_NUMBER() OVER(ORDER BY diff DESC,pid ASC) AS rank
-            FROM best30
-            WHERE best_for_snapshot_id=? AND param=?{level_sql}
+            SELECT bg.pid,n.value AS name,n.norm AS name_norm,bg.level,bg.diff AS value,
+                   s.filename AS extra,
+                   ROW_NUMBER() OVER(ORDER BY bg.diff DESC,bg.pid ASC) AS rank
+            FROM best_growth bg
+            JOIN observations o ON o.snapshot_id=bg.best_snapshot_id AND o.pid=bg.pid
+            LEFT JOIN text_values n ON n.text_id=o.name_id
+            JOIN snapshots s ON s.snapshot_id=bg.best_snapshot_id
+            WHERE bg.best_for_snapshot_id=? AND bg.param=?{level_sql}
         )
         SELECT * FROM ranked WHERE name_norm LIKE ?
         ORDER BY CASE WHEN name_norm=? THEN 0 ELSE 1 END,rank LIMIT 20
         """,
-        [latest[0], param, *level_args, f"%{query.casefold()}%", query.casefold()],
+        [int(latest[0]), param, *level_args, f"%{query.casefold()}%", query.casefold()],
     ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def normalize_name(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+@cached_query
+def find_player(nickname: str) -> dict | None:
+    query = nickname.strip()
+    if not query:
+        return None
+    db = get_db()
+
+    if query.isdigit():
+        row = db.execute(
+            """
+            SELECT o.pid,n.value AS name,n.norm AS name_norm,o.level,s.filename,s.ts
+            FROM observations o
+            JOIN snapshots s ON s.snapshot_id=o.snapshot_id
+            LEFT JOIN text_values n ON n.text_id=o.name_id
+            WHERE o.pid=?
+            ORDER BY s.ts DESC LIMIT 1
+            """,
+            (int(query),),
+        ).fetchone()
+        return dict(row) if row else None
+
+    norm = normalize_name(query)
+    row = db.execute(
+        """
+        WITH candidates AS (
+            SELECT DISTINCT o.pid
+            FROM observations o
+            JOIN text_values matched_name ON matched_name.text_id=o.name_id
+            WHERE matched_name.norm=?
+        ), latest AS (
+            SELECT o.pid,n.value AS name,n.norm AS name_norm,o.level,s.filename,s.ts,
+                   ROW_NUMBER() OVER(PARTITION BY o.pid ORDER BY s.ts DESC) AS rn
+            FROM observations o
+            JOIN candidates c ON c.pid=o.pid
+            JOIN snapshots s ON s.snapshot_id=o.snapshot_id
+            LEFT JOIN text_values n ON n.text_id=o.name_id
+        )
+        SELECT pid,name,name_norm,level,filename,ts
+        FROM latest
+        WHERE rn=1
+        ORDER BY CASE WHEN name_norm=? THEN 0 ELSE 1 END,ts DESC,pid
+        LIMIT 1
+        """,
+        (norm, norm),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+@cached_query
+def player_snapshot_options(pid: int) -> list[dict]:
+    rows = get_db().execute(
+        """
+        SELECT s.snapshot_id,s.filename,s.ts,n.value AS name,o.level
+        FROM observations o
+        JOIN snapshots s ON s.snapshot_id=o.snapshot_id
+        LEFT JOIN text_values n ON n.text_id=o.name_id
+        WHERE o.pid=?
+        ORDER BY s.ts DESC
+        """,
+        (pid,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _row_value(row: sqlite3.Row | dict | None, param: str) -> int | None:
+    if row is None:
+        return None
+    if param == "Сумма статов":
+        values = [row[column] for column in STAT_COLUMNS]
+        if any(value is None for value in values):
+            return None
+        return sum(int(value) for value in values)
+    column = PARAM_TO_COLUMN.get(param)
+    if not column:
+        return None
+    value = row[column]
+    return int(value) if value is not None else None
+
+
+def _overall_rank(snapshot_sid: int, pid: int, param: str, value: int | None) -> int | None:
+    if value is None:
+        return None
+    expr = _player_value_expr(param, "x")
+    row = get_db().execute(
+        f"""
+        SELECT 1+COUNT(*)
+        FROM observations x
+        WHERE x.snapshot_id=? AND {expr} IS NOT NULL
+          AND ({expr}>? OR ({expr}=? AND x.pid<?))
+        """,
+        (snapshot_sid, value, value, pid),
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
+def _growth_rank(
+    from_sid: int,
+    to_sid: int,
+    pid: int,
+    param: str,
+    delta: int | None,
+) -> int | None:
+    if delta is None:
+        return None
+    current = _player_value_expr(param, "c")
+    previous = _player_value_expr(param, "p")
+    diff = f"({current}-{previous})"
+    row = get_db().execute(
+        f"""
+        SELECT 1+COUNT(*)
+        FROM observations c
+        JOIN observations p ON p.snapshot_id=? AND p.pid=c.pid
+        WHERE c.snapshot_id=?
+          AND {current} IS NOT NULL AND {previous} IS NOT NULL
+          AND ({diff}>? OR ({diff}=? AND c.pid<?))
+        """,
+        (from_sid, to_sid, delta, delta, pid),
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
+@cached_query
+def query_personal_stats(pid: int, snap_from: str, snap_to: str) -> dict | None:
+    from_info = snapshot_info(snap_from)
+    to_info = snapshot_info(snap_to)
+    if not from_info or not to_info:
+        return None
+    from_sid, from_ts = from_info
+    to_sid, to_ts = to_info
+    if from_ts > to_ts:
+        from_sid, to_sid = to_sid, from_sid
+        from_ts, to_ts = to_ts, from_ts
+        snap_from, snap_to = snap_to, snap_from
+
+    db = get_db()
+    start = db.execute("SELECT * FROM observations WHERE snapshot_id=? AND pid=?", (from_sid, pid)).fetchone()
+    end = db.execute("SELECT * FROM observations WHERE snapshot_id=? AND pid=?", (to_sid, pid)).fetchone()
+    if start is None or end is None:
+        return None
+
+    latest_sid_row = db.execute("SELECT snapshot_id FROM snapshots ORDER BY ts DESC LIMIT 1").fetchone()
+    latest_sid = int(latest_sid_row[0]) if latest_sid_row else None
+    best_rows: dict[str, dict] = {}
+    if latest_sid is not None:
+        rows = db.execute(
+            """
+            SELECT bg.param,bg.diff,s.filename AS best_snapshot
+            FROM best_growth bg
+            JOIN snapshots s ON s.snapshot_id=bg.best_snapshot_id
+            WHERE bg.best_for_snapshot_id=? AND bg.pid=?
+            """,
+            (latest_sid, pid),
+        ).fetchall()
+        best_rows = {str(row["param"]): dict(row) for row in rows}
+
+    end_name = db.execute(
+        "SELECT value FROM text_values WHERE text_id=?", (end["name_id"],)
+    ).fetchone()
+    rows_out = []
+    for param in PERSONAL_PARAMS:
+        start_value = _row_value(start, param)
+        end_value = _row_value(end, param)
+        delta = end_value - start_value if start_value is not None and end_value is not None else None
+        best = best_rows.get(param)
+        rows_out.append(
+            {
+                "param": param,
+                "start": start_value,
+                "end": end_value,
+                "delta": delta,
+                "growth_rank": _growth_rank(from_sid, to_sid, pid, param, delta),
+                "overall_rank": _overall_rank(to_sid, pid, param, end_value),
+                "best_diff": int(best["diff"]) if best else None,
+                "best_snapshot": best["best_snapshot"] if best else None,
+            }
+        )
+
+    return {
+        "pid": pid,
+        "name": end_name[0] if end_name else str(pid),
+        "level": int(end["level"]) if end["level"] is not None else None,
+        "file1": snap_from,
+        "file2": snap_to,
+        "rows": rows_out,
+    }
 
 
 @app.route("/robots.txt")
@@ -513,15 +887,40 @@ def api_player_suggest():
     if not _db_available():
         return jsonify([])
     snapshot = request.args.get("snapshot")
-    query = " ".join((request.args.get("q") or "").casefold().split())
-    if not snapshot or len(query) < 2:
+    query = normalize_name(request.args.get("q") or "")
+    sid = snapshot_num(snapshot)
+    if sid is None or len(query) < 2:
         return jsonify([])
     rows = get_db().execute(
-        "SELECT DISTINCT name FROM heroes WHERE snapshot_id=? AND visible=1 "
-        "AND name_norm LIKE ? ORDER BY CASE WHEN name_norm=? THEN 0 ELSE 1 END,name LIMIT 20",
-        (snapshot, f"%{query}%", query),
+        """
+        SELECT DISTINCT n.value AS name
+        FROM observations o
+        JOIN text_values n ON n.text_id=o.name_id
+        WHERE o.snapshot_id=? AND n.norm LIKE ?
+        ORDER BY CASE WHEN n.norm=? THEN 0 ELSE 1 END,n.value LIMIT 20
+        """,
+        (sid, f"%{query}%", query),
     ).fetchall()
     return jsonify([row["name"] for row in rows])
+
+
+@app.route("/api/player_suggest_all")
+def api_player_suggest_all():
+    if not _db_available():
+        return jsonify([])
+    query = normalize_name(request.args.get("q") or "")
+    if len(query) < 2:
+        return jsonify([])
+    rows = get_db().execute(
+        """
+        SELECT value
+        FROM text_values
+        WHERE norm LIKE ?
+        ORDER BY CASE WHEN norm=? THEN 0 ELSE 1 END,value LIMIT 20
+        """,
+        (f"%{query}%", query),
+    ).fetchall()
+    return jsonify([row["value"] for row in rows])
 
 
 @app.route("/api/player_search")
@@ -551,7 +950,13 @@ def api_player_search():
     results = []
     for row in rows:
         rank = int(row["rank"])
-        args = {"mode": mode, "param": param, "level": level_raw, "page": str((rank - 1) // PAGE_SIZE + 1), "highlight_pid": str(row["pid"])}
+        args = {
+            "mode": mode,
+            "param": param,
+            "level": level_raw,
+            "page": str((rank - 1) // PAGE_SIZE + 1),
+            "highlight_pid": str(row["pid"]),
+        }
         if file:
             args["file"] = file
         if file1:
@@ -568,10 +973,59 @@ def api_player_search():
     return jsonify({"results": results})
 
 
+@app.route("/profile")
+def profile():
+    snapshots = list_snapshot_ids() if _db_available() else []
+    nickname = (request.args.get("nickname") or "").strip()
+    player = None
+    player_dates: list[dict] = []
+    selected_from = None
+    selected_to = None
+    stats = None
+    error = None
+
+    if nickname and _db_available():
+        player = find_player(nickname)
+        if player is None:
+            error = "Игрок с таким точным ником или ID не найден."
+        else:
+            player_dates = player_snapshot_options(int(player["pid"]))
+            allowed = {str(item["filename"]): item for item in player_dates}
+            if player_dates:
+                requested_from = request.args.get("file1")
+                requested_to = request.args.get("file2")
+                selected_to = requested_to if requested_to in allowed else str(player_dates[0]["filename"])
+                default_from_index = 1 if len(player_dates) > 1 else 0
+                selected_from = requested_from if requested_from in allowed else str(player_dates[default_from_index]["filename"])
+
+                from_ts = int(allowed[selected_from]["ts"])
+                to_ts = int(allowed[selected_to]["ts"])
+                if from_ts > to_ts:
+                    selected_from, selected_to = selected_to, selected_from
+
+                stats = query_personal_stats(int(player["pid"]), selected_from, selected_to)
+                if stats is None:
+                    error = "Для выбранной пары дат нет двух сопоставимых наблюдений игрока."
+
+    return render_template(
+        "profile.html",
+        json_files=snapshots,
+        nickname=nickname,
+        player=player,
+        player_dates=player_dates,
+        file1=selected_from,
+        file2=selected_to,
+        stats=stats,
+        error=error,
+    )
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     values = request.values
     mode = values.get("mode", "Общий")
+    if mode not in {"Общий", "Прирост", "Лучшие (приросты)"}:
+        mode = "Общий"
     selected_param = values.get("param", "Слава")
     selected_level = values.get("level", "Все")
     page = max(1, values.get("page", type=int) or 1)
@@ -652,7 +1106,10 @@ def index():
                 page = pagination["page"]
                 offset = (page - 1) * PAGE_SIZE
                 rating, total = query_rating_overall(file, previous, selected_param, level, PAGE_SIZE, offset)
-            context.update(rating=rating, all_levels=all_levels_for_snapshot(file), pagination=pagination, page_start=offset)
+            context.update(
+                rating=rating, all_levels=all_levels_for_snapshot(file),
+                pagination=pagination, page_start=offset,
+            )
         current_ts, previous_ts = snapshot_ts(file), snapshot_ts(previous)
         if current_ts is not None and previous_ts is not None:
             context["diff_hours"] = round((current_ts - previous_ts) / 3600)
@@ -665,7 +1122,10 @@ def index():
             page = pagination["page"]
             offset = (page - 1) * PAGE_SIZE
             rating, total = query_growth_between(file1, file2, selected_param, level, PAGE_SIZE, offset)
-        context.update(rating=rating, all_levels=all_levels_for_snapshot(file2), pagination=pagination, page_start=offset)
+        context.update(
+            rating=rating, all_levels=all_levels_for_snapshot(file2),
+            pagination=pagination, page_start=offset,
+        )
         start_ts, end_ts = snapshot_ts(file1), snapshot_ts(file2)
         if start_ts is not None and end_ts is not None:
             context["diff_hours"] = abs(round((end_ts - start_ts) / 3600))
@@ -679,7 +1139,8 @@ def index():
             rating, total = query_best_growth(selected_param, level, PAGE_SIZE, offset)
         context.update(
             best_by_param=[{"param": selected_param, "rating": rating}],
-            all_levels=all_levels_for_snapshot(snapshots[0]), pagination=pagination, page_start=offset,
+            all_levels=all_levels_for_snapshot(snapshots[0]),
+            pagination=pagination, page_start=offset,
         )
 
     return render_template("index.html", **context)

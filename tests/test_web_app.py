@@ -54,6 +54,9 @@ class WebAppTests(unittest.TestCase):
                 )
                 self.assertEqual(page.status_code, 200)
                 self.assertEqual(page.data.count(b'data-nickname='), 100)
+                self.assertIn(b'id="page-loading-overlay"', page.data)
+                self.assertIn(b'class="page-number-input"', page.data)
+                self.assertIn(b'href="/profile"', page.data)
 
                 search = client.get(
                     "/api/player_search?" + urlencode({

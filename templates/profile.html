@@ -60,7 +60,7 @@
                 </option>
               {% endfor %}
             {% else %}
-              <option>сначала введите ник</option>
+              <option value=""></option>
             {% endif %}
           </select>
 
@@ -73,7 +73,7 @@
                 </option>
               {% endfor %}
             {% else %}
-              <option>сначала введите ник</option>
+              <option value=""></option>
             {% endif %}
           </select>
 
@@ -83,8 +83,6 @@
 
       {% if error %}
         <div class="profile-message error-message">{{ error }}</div>
-      {% elif not nickname %}
-        <div class="profile-message">Введите ник или ID. После этого появятся только те даты, в которых у игрока есть наблюдение.</div>
       {% endif %}
     </section>
 
@@ -100,7 +98,14 @@
           </div>
         </div>
 
-        <div class="personal-table-wrap">
+        <div class="personal-table-shell">
+          <button
+            type="button"
+            class="table-scroll-hint table-scroll-hint-left"
+            aria-label="Прокрутить таблицу влево"
+            title="Ещё данные слева"
+          >‹</button>
+          <div class="personal-table-wrap" id="personal-table-wrap">
           <table class="personal-stats-table">
             <thead>
               <tr>
@@ -135,8 +140,14 @@
               {% endfor %}
             </tbody>
           </table>
+          </div>
+          <button
+            type="button"
+            class="table-scroll-hint table-scroll-hint-right"
+            aria-label="Прокрутить таблицу вправо"
+            title="Ещё данные справа"
+          >›</button>
         </div>
-        <p class="profile-footnote">Место в приросте считается только среди игроков, у которых есть данные в обе выбранные даты. Отсутствующее предыдущее значение не заменяется нулём.</p>
       </section>
     {% endif %}
   </main>
@@ -201,6 +212,28 @@
           }
         }, 180);
       });
+
+      const tableWrap = document.getElementById("personal-table-wrap");
+      const leftHint = document.querySelector(".table-scroll-hint-left");
+      const rightHint = document.querySelector(".table-scroll-hint-right");
+
+      function updateTableScrollHints() {
+        if (!tableWrap) return;
+        const maxScroll = Math.max(0, tableWrap.scrollWidth - tableWrap.clientWidth);
+        const hasOverflow = maxScroll > 2;
+        leftHint?.classList.toggle("is-visible", hasOverflow && tableWrap.scrollLeft > 2);
+        rightHint?.classList.toggle("is-visible", hasOverflow && tableWrap.scrollLeft < maxScroll - 2);
+      }
+
+      leftHint?.addEventListener("click", () => {
+        tableWrap?.scrollBy({left: -Math.max(180, tableWrap.clientWidth * 0.7), behavior: "smooth"});
+      });
+      rightHint?.addEventListener("click", () => {
+        tableWrap?.scrollBy({left: Math.max(180, tableWrap.clientWidth * 0.7), behavior: "smooth"});
+      });
+      tableWrap?.addEventListener("scroll", updateTableScrollHints, {passive: true});
+      window.addEventListener("resize", updateTableScrollHints);
+      requestAnimationFrame(updateTableScrollHints);
 
       document.addEventListener("click", (event) => {
         const link = event.target.closest?.("a");

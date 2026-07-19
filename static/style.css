@@ -313,3 +313,20 @@ tbody tr:not(.avg-row) td {
     width: clamp(240px, 32vw, 520px);
   }
 }
+.pagination-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 12px 0 4px;
+  font-size: 0.9em;
+}
+
+.pagination-controls a {
+  display: inline-block;
+  padding: 6px 10px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  text-decoration: none;
+}

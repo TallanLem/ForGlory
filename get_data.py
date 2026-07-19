@@ -1,305 +1,493 @@
-import asyncio, nest_asyncio, re, logging, gzip
-import json, glob, os, aiohttp, sys, requests, traceback
+from __future__ import annotations
 
-from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
-from time import sleep
-from gzip import open as gzopen
+import argparse
+import asyncio
+import gzip
+import json
+import logging
+import os
+import random
+import re
+import sqlite3
+import sys
+import time
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Iterable
+
+import aiohttp
+import requests
+
+from forglory.parsing import parse_hero, parse_kill_beasts, profile_url_matches
 
 
 logging.basicConfig(
-	level=logging.INFO,
-	format='%(asctime)s [%(levelname)s] %(message)s',
-	datefmt='%Y-%m-%d %H:%M:%S',
-	handlers=[
-		logging.StreamHandler()
-	]
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+LOG = logging.getLogger("forglory.collector")
+
+ROOT = Path(__file__).resolve().parent
+DATA_DIR = ROOT / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@dataclass
+class FetchFailure:
+    pid: int
+    stage: str
+    error_type: str
+    attempts: int
+    http_status: int | None = None
+    message: str = ""
+
+
+@dataclass
+class FetchResult:
+    pid: int
+    data: dict | None
+    failure: FetchFailure | None = None
+    achievement_failure: FetchFailure | None = None
+
+
+def load_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.exists():
+        return values
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+_ENV = load_env_file(ROOT / ".env")
+
+
+def env_get(key: str, default: str = "") -> str:
+    return os.getenv(key, _ENV.get(key, default))
+
+
+def load_cookie_config() -> tuple[dict[str, str], str]:
+    cookies_json = env_get("COOKIES_JSON", "").strip()
+    if cookies_json:
+        raw = json.loads(cookies_json)
+    else:
+        cookie_path = Path(env_get("COOKIES_FILE", str(ROOT / "static" / "cfg.json")))
+        if not cookie_path.exists():
+            raise RuntimeError(
+                "Cookies are not configured. Set COOKIES_JSON or COOKIES_FILE."
+            )
+        raw = json.loads(cookie_path.read_text(encoding="utf-8"))
+
+    cookies = {
+        str(item.get("name")): str(item.get("value"))
+        for item in raw
+        if item.get("name") and item.get("value")
+    }
+    domain = env_get("WK_DOMAIN", "").strip().lstrip(".")
+    if not domain:
+        for item in raw:
+            if item.get("name") == "wekings_session" and item.get("domain"):
+                domain = str(item["domain"]).lstrip(".")
+                break
+    return cookies, (f"https://{domain}/" if domain else "https://playwekings.mobi/")
+
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Android 10; SM-G973F) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/119.0.0.0 Mobile Safari/537.36"
+    )
+}
+
+SNAPSHOT_RE = re.compile(
+    r"^heroes_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.json(?:\.gz)?$"
 )
 
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(SCRIPT_DIR, "data")
-os.makedirs(DATA_DIR, exist_ok=True)
-
-def load_env_file(path: str = ".env") -> dict:
-	env = {}
-	p = os.path.join(SCRIPT_DIR, path)
-	if not os.path.exists(p):
-		return env
-	with open(p, "r", encoding="utf-8") as f:
-		for line in f:
-			line = line.strip()
-			if not line or line.startswith("#") or "=" not in line:
-				continue
-			k, v = line.split("=", 1)
-			env[k.strip()] = v.strip()
-	return env
-
-_ENV = load_env_file(".env")
-
-def env_get(key: str, default: str = "") -> str:
-	return os.getenv(key, _ENV.get(key, default))
-
-cookies_json = env_get("COOKIES_JSON", "").strip()
-if cookies_json:
-	raw = json.loads(cookies_json)
-else:
-	cookies_file = env_get("COOKIES_FILE", os.path.join(SCRIPT_DIR, "static", "cfg.json"))
-	with open(cookies_file, encoding="utf-8") as f:
-		raw = json.load(f)
-
-cookies = {c.get("name"): c.get("value") for c in raw if c.get("name") and c.get("value")}
-
-domain = env_get("WK_DOMAIN", "").strip().lstrip(".")
-if not domain:
-	for c in raw:
-		if c.get("name") == "wekings_session" and c.get("domain"):
-			domain = str(c["domain"]).lstrip(".")
-			break
-
-dom = f"https://{domain}/" if domain else "https://playwekings.mobi/"
+def load_json_any(path: Path) -> dict:
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt", encoding="utf-8") as handle:
+        return json.load(handle)
 
 
-headers = {
-	"User-Agent": (
-		"Mozilla/5.0 (Linux; Android 10; SM-G973F) "
-		"AppleWebKit/537.36 (KHTML, like Gecko) "
-		"Chrome/119.0.0.0 Mobile Safari/537.36"
-	)
-}
-
-def load_json_any(full_path: str):
-	if full_path.endswith(".gz"):
-		with gzip.open(full_path, "rt", encoding="utf-8") as f:
-			return json.load(f)
-	with open(full_path, "r", encoding="utf-8") as f:
-		return json.load(f)
+def latest_local_snapshot() -> Path | None:
+    candidates: list[tuple[str, Path]] = []
+    for path in DATA_DIR.iterdir():
+        match = SNAPSHOT_RE.match(path.name)
+        if match:
+            candidates.append((match.group(1), path))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
 
 
-def save_cookies(session, path):
-	cookies = [{"name": c.key, "value": c.value} for c in session.cookie_jar]
-	with open(path, "w", encoding="utf-8") as f:
-		json.dump(cookies, f, indent=2, ensure_ascii=False)
-		logging.info(f"Saved {len(cookies)} cookies.")
+def load_ids_from_db(db_path: Path) -> tuple[list[int], set[int], int | None]:
+    """Return all known ids, ids in latest snapshot, and highest probed id."""
+    if not db_path.exists():
+        return [], set(), None
+    conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    try:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "players" in tables and "observations" in tables:
+            known = [int(row[0]) for row in conn.execute("SELECT pid FROM players ORDER BY pid")]
+            latest = conn.execute("SELECT snapshot_id FROM snapshots ORDER BY ts DESC LIMIT 1").fetchone()
+            baseline: set[int] = set()
+            if latest:
+                baseline = {
+                    int(row[0])
+                    for row in conn.execute(
+                        "SELECT pid FROM observations WHERE snapshot_id=?", (latest[0],)
+                    )
+                }
+            highest_row = conn.execute(
+                "SELECT value FROM scan_state WHERE key='highest_probed_id'"
+            ).fetchone()
+            highest = int(highest_row[0]) if highest_row else None
+            return known, baseline, highest
 
-def parse_hero(html, hero_id):
-	soup = BeautifulSoup(html, "html.parser")
-	data = {"ID": hero_id, "Чат":0}
-
-	name_tag = soup.find("p", class_="text-center text-xl")
-	if name_tag:
-		data["Имя"] = name_tag.text.strip()
-
-	stat_blocks = soup.select("div#stats div.grid.grid-cols-profileStat")
-
-	for block in stat_blocks:
-		spans = block.find_all("span")
-		if len(spans) < 2:
-			continue
-
-		icon = spans[0].find("img")
-		content = spans[1]
-
-		if "Клан:" in content.text:
-			link = content.find("a", href=re.compile(r"/clan/info\?id=\d+"))
-			if link:
-				clan_id = re.search(r"id=(\d+)", link["href"]).group(1)
-				data["Клан"] = link.text.strip()
-				data["clan_id"] = int(clan_id)
-			else:
-				data["Клан"] = "не состоит"
-				data["clan_id"] = 0
-			continue
-
-		if "Братство:" in content.text:
-			link = content.find("a", href=re.compile(r"/brotherhood/info\?id=\d+"))
-			if link:
-				bh_id = re.search(r"id=(\d+)", link["href"]).group(1)
-				data["Братство"] = link.text.strip()
-				data["brotherhood_id"] = int(bh_id)
-			else:
-				data["Братство"] = "не состоит"
-				data["brotherhood_id"] = 0
-			continue
-
-		text = spans[1].text.strip()
-
-		if ":" in text:
-			key, value = map(str.strip, text.split(":", 1))
-		else:
-			key, value = text, ""
-
-		if key in ("Награбил", "Потерял") and icon and icon.get("src"):
-			src = icon["src"]
-			if "silver" in src:
-				key += " (серебро)"
-			elif "crystal" in src:
-				key += " (кристаллы)"
-
-		try:
-			value = int(value)
-		except ValueError:
-			value = value.strip()
-
-		data[key] = value
-
-	return data
-
-def parse_kill_beasts(html, hero_id):
-	soup = BeautifulSoup(html, 'html.parser')
-
-	achievements = soup.find_all('div', class_='flex flex-col p-2 leading-5')
-
-	for achievement in achievements:
-
-		name_tag = achievement.find('div', class_='font-bold item-header pb-1')
-		if name_tag and name_tag.text.strip() == 'Повелитель Зверей':
-			spans = achievement.select('span:has(b.font-semibold)')[:2]
-			status_match = re.search(r'(\d+)\s+из\s+(\d+)', spans[0].text)
-			level_match = re.search(r'(\d+)', spans[1].text)
-			level =  int(level_match.group(1))
-			current, total = int(status_match.group(1)), int(status_match.group(2))
-			kills = level * (4 * level - 2) // 2 + current
-			return kills
+        # Legacy release database fallback.
+        if "heroes" in tables:
+            known = [int(row[0]) for row in conn.execute("SELECT DISTINCT pid FROM heroes ORDER BY pid")]
+            latest = conn.execute("SELECT id FROM snapshots ORDER BY ts DESC LIMIT 1").fetchone()
+            baseline = {
+                int(row[0])
+                for row in conn.execute(
+                    "SELECT pid FROM heroes WHERE snapshot_id=?", (latest[0],)
+                )
+            } if latest else set()
+            return known, baseline, max(known, default=None)
+        return [], set(), None
+    finally:
+        conn.close()
 
 
-async def fetch_hero(session, hero_id, sem):
-	url = "{}hero/detail?player={}".format(dom, hero_id)
-	achievements_url = f"{dom}achievements?player={hero_id}"
-	async with sem:
-		try:
-			async with session.get(url, timeout=15) as response:
-				text = await response.text()
-				if str(response.url) != url:
-					logging.warning(f"[{hero_id}] Redirected to different URL: {response.url}")
-					return hero_id, None
-				if "Что-то пошло не так" in text:
-					logging.warning(f"[{hero_id}] Страница отсутствует")
-					return hero_id, None
-				if response.status == 200 and "text-center text-xl" in text:
-					hero_data = parse_hero(text, hero_id)
-
-					#ачивки
-					async with session.get(achievements_url, timeout=15) as ach_response:
-						ach_text = await ach_response.text()
-						kills = parse_kill_beasts(ach_text, hero_id)
-						if kills is not None:
-							hero_data["Убито зверей"] = kills
-
-					logging.info(f"[{hero_id}] OK — {hero_data.get('Имя', 'Неизвестно')}")
-					if hero_data.get("ID") != hero_id:
-						logging.warning(f"ID mismatch: expected {hero_id}, got {hero_data.get('ID')}")
-						return hero_id, None
-					return hero_id, hero_data
-				else:
-					logging.warning(f"[{hero_id}] Пропущен (статус {response.status})")
-		except Exception as e:
-			traceback.print_exc()
+def load_collection_scope(db_path: Path) -> tuple[list[int], set[int], int]:
+    known, baseline, highest = load_ids_from_db(db_path)
+    if not known:
+        latest = latest_local_snapshot()
+        if latest:
+            data = load_json_any(latest)
+            known = sorted(int(pid) for pid in data)
+            baseline = set(known)
+    if not known:
+        start = int(env_get("WK_START_PLAYER_ID", "1"))
+        return [], set(), start - 1
+    return sorted(set(known)), baseline or set(known), highest or max(known)
 
 
-	return hero_id, None
+def check_site_ready(
+    url: str,
+    cookies: dict[str, str],
+    max_attempts: int = 5,
+    delay_seconds: int = 60,
+) -> bool:
+    for attempt in range(1, max_attempts + 1):
+        try:
+            LOG.info("Checking site, attempt %s/%s", attempt, max_attempts)
+            response = requests.get(url, cookies=cookies, headers=HEADERS, timeout=15)
+            response.raise_for_status()
+            if "hero/profile" in response.text or "hero/detail" in response.text:
+                return True
+            LOG.error("Site returned unexpected content")
+        except requests.RequestException as exc:
+            LOG.error("Site check failed: %s", exc)
+        if attempt < max_attempts:
+            time.sleep(delay_seconds)
+    return False
 
 
-def final_ids():
-	folder = DATA_DIR
-	pattern = re.compile(r"^heroes_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.json(?:\.gz)?$")
-
-	files_with_dates = []
-	for filename in os.listdir(folder):
-		m = pattern.match(filename)
-		if m:
-			date_str = m.group(1)
-			files_with_dates.append((filename, date_str))
-
-	files_with_dates.sort(key=lambda x: x[1], reverse=True)
-
-	if not files_with_dates:
-		return None
-
-	latest_name = files_with_dates[0][0]
-	full_path = os.path.join(folder, latest_name)
-	data = load_json_any(full_path)
-
-	return [int(x) for x in data.keys()]
+def _failure(
+    pid: int,
+    stage: str,
+    error_type: str,
+    attempts: int,
+    status: int | None = None,
+    message: str = "",
+) -> FetchFailure:
+    return FetchFailure(
+        pid=pid,
+        stage=stage,
+        error_type=error_type,
+        attempts=attempts,
+        http_status=status,
+        message=message[:300],
+    )
 
 
-def check_site_ready(url, max_attempts=15, delay=600):
-	for attempt in range(1, max_attempts + 1):
-		try:
-			logging.info(f"Checking site (attempt {attempt})")
-			resp = requests.get(url, cookies=cookies, headers=headers, timeout=10)
-			resp.raise_for_status()
-			if 'hero/profile' in resp.text:
-				logging.info("Checking site Success")
-				return True
-			else:
-				logging.error("Content not as expected")
-				print(resp.text)
-		except requests.exceptions.RequestException as e:
-			logging.error(f"Request failed: {e}")
-
-		if attempt < max_attempts:
-			logging.info(f"Waiting {delay} seconds before next attempt")
-			sleep(delay)
-
-	logging.error("Site check failed after all attempts. Aborting")
-	return False
-
-def compress_existing_jsons(keep_days=0):
-	import gzip, shutil, time
-	now = time.time()
-	for path in glob.glob(os.path.join(DATA_DIR, "heroes_*.json")):
-		if keep_days > 0:
-			mtime = os.path.getmtime(path)
-			if now - mtime < keep_days * 86400:
-				continue
-		gz_path = path + ".gz"
-		if os.path.exists(gz_path):
-			os.remove(path)
-			continue
-		with open(path, "rb") as src, gzip.open(gz_path, "wb") as dst:
-			shutil.copyfileobj(src, dst)
-		os.remove(path)
-		logging.info(f"Compressed & removed: {path} -> {gz_path}")
-
-async def main(hero_ids, concurrent_limit):
-	sem = asyncio.Semaphore(concurrent_limit)
-	results = {}
-
-	async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
-		tasks = [fetch_hero(session, hero_id, sem) for hero_id in hero_ids]
-		tasks += [fetch_hero(session, hero_id, sem) for hero_id in range(hero_ids[-1], hero_ids[-1]+300)]
-
-		for task in asyncio.as_completed(tasks):
-			hero_id, data = await task
-			if data:
-				real_id = data.get("ID")
-				if real_id in results:
-					logging.warning(f"Duplicate real ID: {real_id} (already saved)")
-					continue
-				results[real_id] = data
+async def _request_text(
+    session: aiohttp.ClientSession,
+    url: str,
+    pid: int,
+    stage: str,
+    retries: int,
+) -> tuple[str | None, str | None, FetchFailure | None]:
+    for attempt in range(1, retries + 1):
+        try:
+            async with session.get(url, allow_redirects=True) as response:
+                text = await response.text(errors="replace")
+                status = int(response.status)
+                final_url = str(response.url)
+                if status == 200:
+                    return text, final_url, None
+                if status in {404, 410}:
+                    return None, final_url, _failure(pid, stage, "not_found", attempt, status)
+                if status in {401, 403}:
+                    return None, final_url, _failure(pid, stage, "auth_error", attempt, status)
+                if status == 429 or 500 <= status <= 599:
+                    if attempt < retries:
+                        await asyncio.sleep((2 ** (attempt - 1)) + random.random())
+                        continue
+                    return None, final_url, _failure(pid, stage, "temporary_http", attempt, status)
+                return None, final_url, _failure(pid, stage, "http_error", attempt, status)
+        except asyncio.TimeoutError:
+            error = _failure(pid, stage, "timeout", attempt)
+        except aiohttp.ClientError as exc:
+            error = _failure(pid, stage, "network_error", attempt, message=str(exc))
+        except Exception as exc:  # defensive: one malformed response must not kill the run
+            error = _failure(pid, stage, "unexpected_error", attempt, message=repr(exc))
+        if attempt < retries:
+            await asyncio.sleep((2 ** (attempt - 1)) + random.random())
+    return None, None, error
 
 
-		#~ save_cookies(session, os.path.join(SCRIPT_DIR, 'static', 'cfg.json'))
+async def fetch_hero(
+    session: aiohttp.ClientSession,
+    hero_id: int,
+    semaphore: asyncio.Semaphore,
+    domain: str,
+    retries: int,
+) -> FetchResult:
+    profile_url = f"{domain}hero/detail?player={hero_id}"
+    achievement_url = f"{domain}achievements?player={hero_id}"
 
-	logging.info('HEROES CHECK')
+    async with semaphore:
+        profile_text, final_url, failure = await _request_text(
+            session, profile_url, hero_id, "profile", retries
+        )
+        if failure:
+            return FetchResult(hero_id, None, failure)
+        if final_url and not profile_url_matches(final_url, hero_id):
+            return FetchResult(
+                hero_id,
+                None,
+                _failure(hero_id, "profile", "unexpected_redirect", retries, message=final_url),
+            )
+        if not profile_text or "Что-то пошло не так" in profile_text:
+            return FetchResult(
+                hero_id, None, _failure(hero_id, "profile", "not_found", 1)
+            )
+        try:
+            hero_data = parse_hero(profile_text, hero_id)
+        except Exception as exc:
+            return FetchResult(
+                hero_id,
+                None,
+                _failure(hero_id, "profile", "parse_error", retries, message=str(exc)),
+            )
 
-	moscow_time = datetime.utcnow() + timedelta(hours=3)
-	timestamp = moscow_time.strftime("%Y-%m-%d_%H-%M-%S")
-	sorted_data = dict(sorted(results.items(), key=lambda x: int(x[0])))
+        # Achievements are optional. A failure here never discards a valid profile.
+        achievement_failure: FetchFailure | None = None
+        achievement_text, _achievement_final_url, achievement_failure = await _request_text(
+            session, achievement_url, hero_id, "achievements", max(1, retries - 1)
+        )
+        if achievement_text:
+            try:
+                kills = parse_kill_beasts(achievement_text, hero_id)
+                if kills is not None:
+                    hero_data["Убито зверей"] = kills
+                else:
+                    achievement_failure = _failure(
+                        hero_id, "achievements", "achievement_not_found", 1
+                    )
+            except Exception as exc:
+                achievement_failure = _failure(
+                    hero_id, "achievements", "parse_error", 1, message=str(exc)
+                )
 
-	gz_path = os.path.join(DATA_DIR, f"heroes_{timestamp}.json.gz")
-	with gzopen(gz_path, "wt", encoding="utf-8") as f:
-		json.dump(sorted_data, f, ensure_ascii=False)
-	logging.info(f"Saved compressed snapshot: {gz_path}")
+        return FetchResult(hero_id, hero_data, achievement_failure=achievement_failure)
+
+
+async def collect(
+    ids: Iterable[int],
+    cookies: dict[str, str],
+    domain: str,
+    concurrency: int,
+    retries: int,
+) -> tuple[dict[int, dict], list[FetchFailure], list[FetchFailure]]:
+    ids = list(dict.fromkeys(ids))
+    results: dict[int, dict] = {}
+    failures: list[FetchFailure] = []
+    achievement_failures: list[FetchFailure] = []
+    semaphore = asyncio.Semaphore(concurrency)
+    timeout = aiohttp.ClientTimeout(total=35, connect=10, sock_read=20)
+    connector = aiohttp.TCPConnector(limit=max(concurrency * 2, 20), ttl_dns_cache=300)
+
+    async with aiohttp.ClientSession(
+        cookies=cookies,
+        headers=HEADERS,
+        timeout=timeout,
+        connector=connector,
+    ) as session:
+        tasks = [
+            asyncio.create_task(fetch_hero(session, pid, semaphore, domain, retries))
+            for pid in ids
+        ]
+        completed = 0
+        for future in asyncio.as_completed(tasks):
+            item = await future
+            completed += 1
+            if item.data is not None:
+                results[item.pid] = item.data
+            elif item.failure:
+                failures.append(item.failure)
+            if item.achievement_failure:
+                achievement_failures.append(item.achievement_failure)
+            if completed % 250 == 0 or completed == len(tasks):
+                LOG.info(
+                    "Progress %s/%s: profiles=%s, failed=%s, achievement warnings=%s",
+                    completed,
+                    len(tasks),
+                    len(results),
+                    len(failures),
+                    len(achievement_failures),
+                )
+    return results, failures, achievement_failures
+
+
+def save_snapshot(
+    results: dict[int, dict],
+    failures: list[FetchFailure],
+    achievement_failures: list[FetchFailure],
+    baseline_ids: set[int],
+    known_ids: list[int],
+    probe_start: int,
+    probe_end: int,
+) -> tuple[Path, Path]:
+    # Original project stores Moscow time in filenames. Keep that convention for UI continuity.
+    captured = datetime.now(timezone.utc) + timedelta(hours=3)
+    timestamp = captured.strftime("%Y-%m-%d_%H-%M-%S")
+    snapshot_path = DATA_DIR / f"heroes_{timestamp}.json.gz"
+    metadata_path = DATA_DIR / f"heroes_{timestamp}.meta.json"
+
+    sorted_data = {str(pid): results[pid] for pid in sorted(results)}
+    with gzip.open(snapshot_path, "wt", encoding="utf-8", compresslevel=6) as handle:
+        json.dump(sorted_data, handle, ensure_ascii=False, separators=(",", ":"))
+
+    baseline_success = len(baseline_ids.intersection(results))
+    metadata = {
+        "schema": 1,
+        "snapshot": snapshot_path.name,
+        "captured_at": captured.isoformat(),
+        "known_ids_count": len(known_ids),
+        "baseline_ids_count": len(baseline_ids),
+        "baseline_success_count": baseline_success,
+        "successful_profiles": len(results),
+        "probe_start": probe_start,
+        "probe_end": probe_end,
+        "highest_probed_id": probe_end,
+        "failures": [asdict(item) for item in failures],
+        "achievement_failures": [asdict(item) for item in achievement_failures],
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return snapshot_path, metadata_path
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Collect all known and newly probed players")
+    parser.add_argument("--db-path", default=env_get("DB_PATH", "data/db/ratings.sqlite"))
+    parser.add_argument("--concurrency", type=int, default=int(env_get("COLLECT_CONCURRENCY", "10")))
+    parser.add_argument("--retries", type=int, default=int(env_get("COLLECT_RETRIES", "3")))
+    parser.add_argument("--probe-count", type=int, default=int(env_get("NEW_PLAYER_PROBE_COUNT", "300")))
+    parser.add_argument(
+        "--min-success-ratio",
+        type=float,
+        default=float(env_get("MIN_BASELINE_SUCCESS_RATIO", "0.995")),
+    )
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    cookies, domain = load_cookie_config()
+    if not check_site_ready(
+        domain,
+        cookies,
+        max_attempts=int(env_get("SITE_READY_ATTEMPTS", "5")),
+        delay_seconds=int(env_get("SITE_READY_DELAY_SECONDS", "60")),
+    ):
+        return 1
+
+    db_path = (ROOT / args.db_path).resolve() if not Path(args.db_path).is_absolute() else Path(args.db_path)
+    known_ids, baseline_ids, highest_probed = load_collection_scope(db_path)
+    probe_start = highest_probed + 1
+    probe_end = highest_probed + max(0, args.probe_count)
+    ids = [*known_ids, *range(probe_start, probe_end + 1)]
+    LOG.info(
+        "Collection scope: %s known ids, baseline=%s, probing %s..%s",
+        len(known_ids),
+        len(baseline_ids),
+        probe_start,
+        probe_end,
+    )
+
+    results, failures, achievement_failures = asyncio.run(
+        collect(ids, cookies, domain, args.concurrency, args.retries)
+    )
+
+    baseline_success = len(baseline_ids.intersection(results))
+    ratio = baseline_success / len(baseline_ids) if baseline_ids else 1.0
+    if baseline_ids and ratio < args.min_success_ratio:
+        LOG.error(
+            "Snapshot rejected: baseline success %.2f%% is below %.2f%% (%s/%s)",
+            ratio * 100,
+            args.min_success_ratio * 100,
+            baseline_success,
+            len(baseline_ids),
+        )
+        failure_report = DATA_DIR / "last_failed_collection.json"
+        failure_report.write_text(
+            json.dumps(
+                {
+                    "baseline_success_ratio": ratio,
+                    "baseline_success": baseline_success,
+                    "baseline_total": len(baseline_ids),
+                    "failures": [asdict(item) for item in failures],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return 2
+
+    snapshot, metadata = save_snapshot(
+        results,
+        failures,
+        achievement_failures,
+        baseline_ids,
+        known_ids,
+        probe_start,
+        probe_end,
+    )
+    LOG.info("Saved snapshot: %s", snapshot)
+    LOG.info("Saved metadata: %s", metadata)
+    LOG.info(
+        "Collection complete: %s profiles, %s profile failures, %s achievement warnings",
+        len(results),
+        len(failures),
+        len(achievement_failures),
+    )
+    return 0
 
 
 if __name__ == "__main__":
-	if not check_site_ready(dom):
-		sys.exit(1)
-
-	hero_ids = final_ids()
-	nest_asyncio.apply()
-	asyncio.run(main(hero_ids, concurrent_limit=10))
-
-	#~ compress_existing_jsons(keep_days=0)
+    sys.exit(main())

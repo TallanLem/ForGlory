@@ -13,20 +13,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
+  collect-build-deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: main
+<<<<<<< Updated upstream
           fetch-depth: 0
+=======
+          fetch-depth: 1
+>>>>>>> Stashed changes
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
           cache: pip
 
       - name: Install dependencies
@@ -34,12 +39,29 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Fetch latest snapshots
+      - name: Run parser, database and web tests
+        run: |
+          python -m unittest discover -s tests -v
+
+      - name: Restore the previous database release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          python tools/fetch_db_from_release.py --optional --out data/db/ratings.sqlite
+
+      - name: Collect known players and probe new IDs
         env:
           COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
+          DB_PATH: data/db/ratings.sqlite
+          MIN_BASELINE_SUCCESS_RATIO: "0.995"
+          COLLECT_RETRIES: "3"
+          COLLECT_CONCURRENCY: "10"
+          NEW_PLAYER_PROBE_COUNT: "300"
         run: |
-          python get_data.py
+          python get_data.py --db-path data/db/ratings.sqlite
 
+<<<<<<< Updated upstream
       - name: Save latest snapshot as artifact backup
         id: latest_snapshot
         run: |
@@ -55,14 +77,36 @@ jobs:
           retention-days: 7
 
       - name: Build/Update SQLite DB (last 40 snapshots + best30)
+=======
+      - name: Locate collection files
+        id: collection
+        shell: bash
+>>>>>>> Stashed changes
         run: |
-          python tools/build_db.py --data-dir data --db-path data/db/ratings.sqlite --keep 40 --best-window-days 30
+          snapshot="$(find data -maxdepth 1 -type f -name 'heroes_*.json.gz' -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)"
+          metadata="${snapshot%.json.gz}.meta.json"
+          echo "snapshot=$snapshot" >> "$GITHUB_OUTPUT"
+          echo "metadata=$metadata" >> "$GITHUB_OUTPUT"
 
-      - name: Commit and push snapshots (no sqlite)
+      - name: Back up the raw collection for seven days
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-collection-${{ github.run_id }}
+          path: |
+            ${{ steps.collection.outputs.snapshot }}
+            ${{ steps.collection.outputs.metadata }}
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Incrementally update SQLite
         run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
+          python tools/build_db.py \
+            --data-dir data \
+            --db-path data/db/ratings.sqlite \
+            --best-window-days 30 \
+            --max-gap-hours 26
 
+<<<<<<< Updated upstream
           if [ ! -f .gitignore ]; then touch .gitignore; fi
 
           grep -qxF "data/db/*.sqlite" .gitignore || echo "data/db/*.sqlite" >> .gitignore
@@ -99,22 +143,35 @@ jobs:
           exit 1
 
       - name: Upload ratings.sqlite to GitHub Release (db-latest)
+=======
+      - name: Compress and validate SQLite
+        run: |
+          python tools/compress_db.py \
+            --db data/db/ratings.sqlite \
+            --out data/db/ratings.sqlite.gz
+
+      - name: Publish the database in GitHub Release
+>>>>>>> Stashed changes
         uses: ncipollo/release-action@v1
         with:
           tag: db-latest
           name: Database (latest)
           allowUpdates: true
           replacesArtifacts: true
-          artifacts: data/db/ratings.sqlite
+          artifacts: data/db/ratings.sqlite.gz
 
-      - name: Trigger Render deploy hook
-        if: success()
+      - name: Trigger Render only after the release is ready
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
           if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
-            echo "RENDER_DEPLOY_HOOK_URL secret not set; skipping deploy trigger."
+            echo "RENDER_DEPLOY_HOOK_URL is not set; skipping Render deploy."
             exit 0
           fi
+<<<<<<< Updated upstream
 
           curl -fsSL -X GET "$RENDER_DEPLOY_HOOK_URL"
+=======
+          curl --fail --silent --show-error --retry 3 --retry-delay 5 \
+            -X GET "$RENDER_DEPLOY_HOOK_URL"
+>>>>>>> Stashed changes

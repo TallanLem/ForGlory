@@ -2,22 +2,25 @@
 <html lang="ru">
 <head>
   <script>
-function searchByNickname() {
+async function searchByNickname() {
   const input = document.getElementById("scroll-nick");
-  const query = input ? input.value.trim().toLowerCase() : "";
+  const query = input ? input.value.trim() : "";
   if (!query) return;
-  const rows = document.querySelectorAll('tr[data-nickname]');
-  let found = false;
-  for (const row of rows) {
-    if (row.dataset.nickname === query) {
-      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      row.style.outline = '2px solid gold';
-      setTimeout(() => row.style.outline = '', 3000);
-      found = true;
-      break;
+  const form = document.querySelector("form.form-container");
+  const params = new URLSearchParams(new FormData(form));
+  params.set("q", query);
+  try {
+    const response = await fetch(`/api/player_search?${params.toString()}`, {headers: {"Accept": "application/json"}});
+    const data = await response.json();
+    if (!response.ok || !data.results || !data.results.length) {
+      alert("Игрок не найден для выбранных дат и фильтров.");
+      return;
     }
+    window.location.href = data.results[0].url;
+  } catch (error) {
+    console.error(error);
+    alert("Ошибка поиска игрока.");
   }
-  if (!found) alert("Игрок не найден.");
 }
 function handleEnterKey(event) {
   if (event.key === "Enter") {
@@ -41,7 +44,8 @@ function handleEnterKey(event) {
 </head>
 <body>
   <div class="container">
-    <form method="POST" class="form-container">
+    <form method="GET" class="form-container">
+      <input type="hidden" name="page" value="1">
       <div class="mode-toggle">
         <input type="radio" id="tab1" name="mode" value="Общий"
                onchange="this.form.submit()" {{ 'checked' if mode == 'Общий' else '' }}>
@@ -170,9 +174,9 @@ function handleEnterKey(event) {
             </tr>
           </thead>
           <tbody>
-            {% for row in block.rating[:1000] %}
-              <tr data-nickname="{{ row[1]|lower }}">
-                <td style="width:40px; text-align:center;">{% if loop.index == 1 %}🥇{% elif loop.index == 2 %}🥈{% elif loop.index == 3 %}🥉{% else %}{{ loop.index }}{% endif %}</td>
+            {% for idx, row in enumerate(block.rating, page_start + 1) %}
+              <tr id="player-{{ row[0] }}" data-nickname="{{ row[1]|lower }}" {% if highlight_pid == row[0] %}style="background:rgba(255,215,0,0.2);outline:2px solid gold;"{% endif %}>
+                <td style="width:40px; text-align:center;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
                 <td style="text-align:left;">
 					<a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank"
 					   style="display:inline-flex; width:100%; overflow:hidden; min-width:0; align-items:baseline;">
@@ -185,7 +189,7 @@ function handleEnterKey(event) {
 					</a>
                 </td>
 					<td style="text-align:left;">
-					  {{ row[3] }}
+					  {{ row[3] if row[3] is not none else '—' }}
 					  {% if row[4] %}
 						<sup style="font-size:0.6em; margin-left:2px; opacity:.7">
 						  {{ extract_datetime_from_filename(row[4]).strftime('%d.%m') }}
@@ -196,6 +200,13 @@ function handleEnterKey(event) {
             {% endfor %}
           </tbody>
         </table>
+        {% if pagination and pagination.total_pages > 1 %}
+          <div class="pagination-controls">
+            {% if pagination.prev_url %}<a href="{{ pagination.prev_url }}">← Назад</a>{% endif %}
+            <span>Страница {{ pagination.page }} из {{ pagination.total_pages }} · {{ pagination.total_rows }} игроков</span>
+            {% if pagination.next_url %}<a href="{{ pagination.next_url }}">Вперёд →</a>{% endif %}
+          </div>
+        {% endif %}
       {% else %}
         <div style="opacity:.7;">Нет данных для параметра «{{ param }}».</div>
       {% endif %}
@@ -383,13 +394,13 @@ function handleEnterKey(event) {
               </tr>
             {% endfor %}
           {% else %}
-            {% for idx, row in enumerate(rating, 1) %}
+            {% for idx, row in enumerate(rating, page_start + 1) %}
 				{% set ID = row[0] %}
 				{% set name = row[1] %}
 				{% set level = row[2] %}
 				{% set value = row[3] %}
 		
-              <tr data-nickname="{{ name|lower|e }}" {% if highlighted %}style="background: rgba(255,215,0,0.2);"{% endif %}>
+              <tr id="player-{{ ID }}" data-nickname="{{ name|lower|e }}" {% if highlight_pid == ID %}style="background:rgba(255,215,0,0.2);outline:2px solid gold;"{% endif %}>
                 <td style="width:30px; text-align:center;">{% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}</td>
                 <td class="wide-name">
 					<a href="https://playwekings.mobi/hero/detail?player={{ ID }}" target="_blank"
@@ -403,7 +414,7 @@ function handleEnterKey(event) {
 					</a>
                 </td>
 				<td style="text-align:left;">
-				  {{ value }}
+				  {{ value if value is not none else '—' }}
 				  {% if mode == "Общий" and row[4] is not none and row[4] != 0 %}
 					<span style="color: {{ 'green' if row[4] > 0 else 'red' }}; font-size:0.75em; display:inline-block; transform:translateY(-0.35em); line-height:1;">
 					  {{ '+' if row[4] > 0 else '-' }}{{ row[4] }}
@@ -420,6 +431,13 @@ function handleEnterKey(event) {
           {% endif %}
         </tbody>
       </table>
+      {% if pagination and pagination.total_pages > 1 and not (param.startswith('Кланы') or param.startswith('Братства') or param == 'По уровню') %}
+        <div class="pagination-controls">
+          {% if pagination.prev_url %}<a href="{{ pagination.prev_url }}">← Назад</a>{% endif %}
+          <span>Страница {{ pagination.page }} из {{ pagination.total_pages }} · {{ pagination.total_rows }} игроков</span>
+          {% if pagination.next_url %}<a href="{{ pagination.next_url }}">Вперёд →</a>{% endif %}
+        </div>
+      {% endif %}
     {% endif %}
   </div>
   
@@ -448,39 +466,7 @@ function handleEnterKey(event) {
 
 
   <script>
-	  // Сбор никнеймов безопасно (без вложенных if/else внутри JS-массива)
-	  {% set names_list = [] %}
-	  {% if mode == 'Лучшие (приросты)' %}
-		{% set blocks = best_by_param | selectattr('param','equalto',param) | list %}
-		{% if blocks|length > 0 %}
-		  {% set names_list = (blocks[0].rating[:1000] | map(attribute=1) | list) %}
-		{% endif %}
-	  {% else %}
-		{% set ns = namespace(names=[]) %}
-		{% for row in rating %}
-		  {# Словарь (кланы/братства и т.п.) #}
-		  {% if row is mapping %}
-			{% set rname = row.get('name') %}
-			{% if rname is not none %}
-			  {% set ns.names = ns.names + [rname] %}
-			{% endif %}
-			{% if row.get('members') %}
-			  {% for hero in row.get('members') %}
-				{% if hero is mapping and hero.get('name') is not none %}
-				  {% set ns.names = ns.names + [hero.get('name')] %}
-				{% endif %}
-			  {% endfor %}
-			{% endif %}
-		  {# Кортеж/список (pid, name, ...) #}
-		  {% elif row is sequence and row|length > 1 %}
-			{% set ns.names = ns.names + [row[1]] %}
-		  {% endif %}
-		{% endfor %}
-		{% set names_list = ns.names %}
-	  {% endif %}
-	  const allNicknames = {{ names_list | tojson }};
-
-	  document.addEventListener("DOMContentLoaded", () => {
+          document.addEventListener("DOMContentLoaded", () => {
 		// Переключение темы
 		const toggleButton = document.getElementById("theme-toggle");
 		const root = document.documentElement;
@@ -503,25 +489,36 @@ function handleEnterKey(event) {
 		  localStorage.setItem("theme", next);
 		  toggleButton.textContent = next === "dark" ? "☀️" : "🌙";
 		});
+            // Подсказки берутся из БД по всей выбранной дате, не только с текущей страницы.
+            const input = document.getElementById("scroll-nick");
+            const datalist = document.getElementById("nicknames");
+            let suggestTimer = null;
+            input?.addEventListener("input", () => {
+              clearTimeout(suggestTimer);
+              const val = input.value.trim();
+              datalist.innerHTML = "";
+              if (val.length < 2) return;
+              suggestTimer = setTimeout(async () => {
+                const form = document.querySelector("form.form-container");
+                const formData = new FormData(form);
+                const snapshot = formData.get("file2") || formData.get("file") || {{ (json_files[0] if json_files else '')|tojson }};
+                try {
+                  const response = await fetch(`/api/player_suggest?snapshot=${encodeURIComponent(snapshot)}&q=${encodeURIComponent(val)}`);
+                  const names = await response.json();
+                  names.forEach(name => {
+                    const option = document.createElement("option");
+                    option.value = name;
+                    datalist.appendChild(option);
+                  });
+                } catch (error) {
+                  console.error(error);
+                }
+              }, 180);
+            });
 
-		// Поиск никнейма
-		const input = document.getElementById("scroll-nick");
-		const datalist = document.getElementById("nicknames");
-		input?.addEventListener("input", () => {
-		  const val = input.value.trim().toLowerCase();
-		  datalist.innerHTML = "";
-		  if (val.length >= 2) {
-			allNicknames
-			  .filter(n => typeof n === "string" && n.toLowerCase().includes(val))
-			  .slice(0, 20)
-			  .forEach(n => {
-				const option = document.createElement("option");
-				option.value = n;
-				datalist.appendChild(option);
-			  });
-		  }
-		});
-	  });
+            const highlighted = document.getElementById("player-{{ highlight_pid or '' }}");
+            highlighted?.scrollIntoView({behavior: "smooth", block: "center"});
+          });
 	  
 	  // Переключаем вид общей суммы/прироста при раскрытии/сворачивании details
 		document.querySelectorAll('td > details').forEach((d) => {

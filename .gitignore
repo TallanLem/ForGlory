@@ -1,4 +1,12 @@
 /old_data/
-data/db/*.sqlite
-data/db/ratings.sqlite
-static/cfg.json
+/data/db/
+/data/exported/
+/data/heroes_*.meta.json
+/data/last_failed_collection.json
+/static/cfg.json
+__pycache__/
+*.py[cod]
+.venv/
+.env
+/data/heroes_*.json
+/data/heroes_*.json.gz

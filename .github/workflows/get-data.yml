@@ -22,11 +22,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
-<<<<<<< Updated upstream
-          fetch-depth: 0
-=======
           fetch-depth: 1
->>>>>>> Stashed changes
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -61,27 +57,9 @@ jobs:
         run: |
           python get_data.py --db-path data/db/ratings.sqlite
 
-<<<<<<< Updated upstream
-      - name: Save latest snapshot as artifact backup
-        id: latest_snapshot
-        run: |
-          latest_snapshot="$(find data -maxdepth 1 -type f -name 'heroes_*.json.gz' -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2- || true)"
-          echo "path=$latest_snapshot" >> "$GITHUB_OUTPUT"
-
-      - name: Upload latest snapshot artifact
-        if: steps.latest_snapshot.outputs.path != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: latest-snapshot
-          path: ${{ steps.latest_snapshot.outputs.path }}
-          retention-days: 7
-
-      - name: Build/Update SQLite DB (last 40 snapshots + best30)
-=======
       - name: Locate collection files
         id: collection
         shell: bash
->>>>>>> Stashed changes
         run: |
           snapshot="$(find data -maxdepth 1 -type f -name 'heroes_*.json.gz' -printf '%T@ %p\n' | sort -nr | head -n 1 | cut -d' ' -f2-)"
           metadata="${snapshot%.json.gz}.meta.json"
@@ -106,44 +84,6 @@ jobs:
             --best-window-days 30 \
             --max-gap-hours 26
 
-<<<<<<< Updated upstream
-          if [ ! -f .gitignore ]; then touch .gitignore; fi
-
-          grep -qxF "data/db/*.sqlite" .gitignore || echo "data/db/*.sqlite" >> .gitignore
-          grep -qxF "data/db/ratings.sqlite" .gitignore || echo "data/db/ratings.sqlite" >> .gitignore
-
-          git add .gitignore
-          git add data/ .github/workflows/get-data.yml || true
-
-          git restore --staged -- data/db/*.sqlite data/db/ratings.sqlite 2>/dev/null || true
-
-          if git diff --cached --quiet; then
-            echo "No snapshot changes to commit."
-            exit 0
-          fi
-
-          git commit -m "auto: update snapshots"
-
-          for attempt in 1 2 3; do
-            echo "Push attempt $attempt..."
-
-            git fetch origin main
-            git rebase origin/main
-
-            if git push origin HEAD:main; then
-              echo "Push successful."
-              exit 0
-            fi
-
-            echo "Push failed, retrying..."
-            sleep 5
-          done
-
-          echo "Push failed after 3 attempts."
-          exit 1
-
-      - name: Upload ratings.sqlite to GitHub Release (db-latest)
-=======
       - name: Compress and validate SQLite
         run: |
           python tools/compress_db.py \
@@ -151,7 +91,6 @@ jobs:
             --out data/db/ratings.sqlite.gz
 
       - name: Publish the database in GitHub Release
->>>>>>> Stashed changes
         uses: ncipollo/release-action@v1
         with:
           tag: db-latest
@@ -168,10 +107,5 @@ jobs:
             echo "RENDER_DEPLOY_HOOK_URL is not set; skipping Render deploy."
             exit 0
           fi
-<<<<<<< Updated upstream
-
-          curl -fsSL -X GET "$RENDER_DEPLOY_HOOK_URL"
-=======
           curl --fail --silent --show-error --retry 3 --retry-delay 5 \
             -X GET "$RENDER_DEPLOY_HOOK_URL"
->>>>>>> Stashed changes

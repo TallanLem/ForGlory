@@ -71,7 +71,7 @@ def extract_datetime_from_filename(filename: str) -> datetime:
 def format_int(value: int | None) -> str:
     if value is None:
         return "—"
-    return f"{int(value):,}".replace(",", " ")
+    return str(int(value))
 
 
 @app.template_global()

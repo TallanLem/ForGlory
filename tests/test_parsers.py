@@ -33,6 +33,34 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(hero["Уровень"], 9)
         self.assertEqual(hero["Сила"], 321)
 
+    def test_confirmation_label_before_real_name_is_ignored(self) -> None:
+        html = """
+        <html><body>
+          <p class="text-center text-xl">Подтверждение</p>
+          <div id="profile">
+            <p class="text-center text-xl">Настоящий Ник</p>
+          </div>
+          <div id="stats">
+            <div class="grid grid-cols-profileStat"><span></span><span>Уровень: 35</span></div>
+            <div class="grid grid-cols-profileStat"><span></span><span>Слава: 42 710</span></div>
+          </div>
+        </body></html>
+        """
+        hero = parse_hero(html, 187)
+        self.assertEqual(hero["Имя"], "Настоящий Ник")
+        self.assertEqual(hero["Уровень"], 35)
+        self.assertEqual(hero["Слава"], 42710)
+
+    def test_confirmation_page_without_real_profile_is_rejected(self) -> None:
+        html = """
+        <html><body>
+          <p class="text-center text-xl">Подтверждение</p>
+          <div id="stats"></div>
+        </body></html>
+        """
+        with self.assertRaisesRegex(ValueError, "profile_name_not_found|profile_stats_not_found"):
+            parse_hero(html, 187)
+
     def test_broken_achievement_is_optional(self) -> None:
         self.assertIsNone(parse_kill_beasts(self.fixture("achievements_broken.html"), 103))
 

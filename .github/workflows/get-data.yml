@@ -46,6 +46,12 @@ jobs:
         run: |
           python tools/fetch_db_from_release.py --optional --out data/db/ratings.sqlite
 
+      - name: Repair corrupted names in the restored database
+        run: |
+          python tools/profile_name_guard.py repair-db \
+            --db data/db/ratings.sqlite \
+            --optional
+
       - name: Collect known players and probe new IDs
         env:
           COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
@@ -65,6 +71,11 @@ jobs:
           metadata="${snapshot%.json.gz}.meta.json"
           echo "snapshot=$snapshot" >> "$GITHUB_OUTPUT"
           echo "metadata=$metadata" >> "$GITHUB_OUTPUT"
+
+      - name: Validate collected player names
+        run: |
+          python tools/profile_name_guard.py validate-snapshot \
+            --snapshot "${{ steps.collection.outputs.snapshot }}"
 
       - name: Back up the raw collection for seven days
         uses: actions/upload-artifact@v4

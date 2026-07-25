@@ -42,7 +42,7 @@ def _find_profile_name(soup: BeautifulSoup) -> str | None:
             candidate = str(value).strip()
             if not candidate:
                 continue
-            if not trusted and normalize_profile_text(candidate) in PROFILE_UI_LABELS:
+            if normalize_profile_text(candidate) in PROFILE_UI_LABELS:
                 continue
             return candidate
     return None
@@ -108,17 +108,18 @@ def parse_hero(html: str, hero_id: int) -> dict:
         numeric = parse_int(raw_value)
         data[key] = numeric if numeric is not None else raw_value.strip()
 
-    # A confirmation/interstitial page may contain generic text but no real
-    # profile counters. Require the level and at least one additional numeric
-    # profile value, while keeping compatibility with partial test/legacy pages.
-    numeric_profile_keys = (
-        "Слава", "Побед", "Поражений", "Сила", "Защита",
-        "Ловкость", "Мастерство", "Живучесть",
-    )
-    numeric_values = sum(
-        isinstance(data.get(key), int) for key in numeric_profile_keys
-    )
-    if not stat_blocks or data.get("Уровень") is None or numeric_values < 1:
+    # Reject an interstitial/confirmation page, but allow partial legacy
+    # profiles. Some valid profiles can omit the level and core combat counters
+    # while still containing clan or resource statistics.
+    profile_marker_keys = {
+        "Уровень", "Слава", "Побед", "Поражений",
+        "Побед над Драконом", "Побед над Змеем",
+        "Сила", "Защита", "Ловкость", "Мастерство", "Живучесть",
+        "Награбил (серебро)", "Потерял (серебро)",
+        "Награбил (кристаллы)", "Потерял (кристаллы)",
+        "Клан", "Братство",
+    }
+    if not stat_blocks or not any(key in data for key in profile_marker_keys):
         raise ValueError("profile_stats_not_found")
 
     # These fields are genuinely zero when the page omits them in the current game layout.

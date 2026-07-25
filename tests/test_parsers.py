@@ -33,6 +33,38 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(hero["Уровень"], 9)
         self.assertEqual(hero["Сила"], 321)
 
+
+    def test_current_layout_uses_data_hero_name_id(self) -> None:
+        html = """
+        <html><head><title>Детали</title></head><body>
+          <span data-hero-name-id="77">Вредина</span>
+          <div id="stats">
+            <div class="grid grid-cols-profileStat"><span></span><span>Уровень: 26</span></div>
+            <div class="grid grid-cols-profileStat"><span></span><span>Слава: 64 495</span></div>
+          </div>
+          <div id="confirm-modal">
+            <p class="text-center text-xl">Подтверждение</p>
+          </div>
+        </body></html>
+        """
+        hero = parse_hero(html, 77)
+        self.assertEqual(hero["Имя"], "Вредина")
+        self.assertEqual(hero["Уровень"], 26)
+        self.assertEqual(hero["Слава"], 64495)
+
+    def test_generic_page_title_is_not_used_as_nickname(self) -> None:
+        html = """
+        <html><head><title>Детали</title></head><body>
+          <p class="text-center text-xl">Подтверждение</p>
+          <div id="stats">
+            <div class="grid grid-cols-profileStat"><span></span><span>Уровень: 26</span></div>
+            <div class="grid grid-cols-profileStat"><span></span><span>Слава: 64 495</span></div>
+          </div>
+        </body></html>
+        """
+        hero = parse_hero(html, 77, fallback_name="Старый Ник")
+        self.assertEqual(hero["Имя"], "Старый Ник")
+
     def test_confirmation_label_before_real_name_is_ignored(self) -> None:
         html = """
         <html><body>
@@ -51,6 +83,33 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(hero["Уровень"], 35)
         self.assertEqual(hero["Слава"], 42710)
 
+    def test_known_player_uses_previous_name_when_markup_hides_nickname(self) -> None:
+        html = """
+        <html><body>
+          <p class="text-center text-xl">Подтверждение</p>
+          <div id="stats">
+            <div class="grid grid-cols-profileStat"><span></span><span>Уровень: 35</span></div>
+            <div class="grid grid-cols-profileStat"><span></span><span>Слава: 42 710</span></div>
+          </div>
+        </body></html>
+        """
+        hero = parse_hero(html, 187, fallback_name="Неп0к0рный")
+        self.assertEqual(hero["Имя"], "Неп0к0рный")
+        self.assertEqual(hero["Слава"], 42710)
+
+    def test_new_player_without_real_name_is_rejected(self) -> None:
+        html = """
+        <html><body>
+          <p class="text-center text-xl">Подтверждение</p>
+          <div id="stats">
+            <div class="grid grid-cols-profileStat"><span></span><span>Уровень: 35</span></div>
+            <div class="grid grid-cols-profileStat"><span></span><span>Слава: 42 710</span></div>
+          </div>
+        </body></html>
+        """
+        with self.assertRaisesRegex(ValueError, "profile_name_not_found"):
+            parse_hero(html, 999999)
+
     def test_confirmation_page_without_real_profile_is_rejected(self) -> None:
         html = """
         <html><body>
@@ -59,7 +118,7 @@ class ParserTests(unittest.TestCase):
         </body></html>
         """
         with self.assertRaisesRegex(ValueError, "profile_name_not_found|profile_stats_not_found"):
-            parse_hero(html, 187)
+            parse_hero(html, 187, fallback_name="Неп0к0рный")
 
     def test_broken_achievement_is_optional(self) -> None:
         self.assertIsNone(parse_kill_beasts(self.fixture("achievements_broken.html"), 103))

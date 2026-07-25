@@ -16,19 +16,19 @@ def _is_enabled(value: str | None, default: bool = False) -> bool:
 
 def _refresh_render_database() -> None:
     """Download db-latest once per Render runtime instance before Flask imports."""
-    if not _is_enabled(os.environ.get("RENDER")):
-        return
-
-    # This variable is runtime-only on Render. Its absence prevents downloads
-    # during the build phase and in GitHub Actions tests.
-    if not os.environ.get("RENDER_WEB_CONCURRENCY"):
+    root = Path(__file__).resolve().parents[1]
+    is_render = (
+        _is_enabled(os.environ.get("RENDER"))
+        or bool(os.environ.get("RENDER_SERVICE_ID"))
+        or "/opt/render/" in root.as_posix()
+    )
+    if not is_render:
         return
 
     if not _is_enabled(os.environ.get("REFRESH_DB_ON_START"), default=True):
         print("Render database refresh is disabled by REFRESH_DB_ON_START.", flush=True)
         return
 
-    root = Path(__file__).resolve().parents[1]
     script = root / "tools" / "fetch_db_from_release.py"
     db_path = Path(
         os.environ.get("DB_PATH", str(root / "data" / "db" / "ratings.sqlite"))
@@ -61,6 +61,10 @@ def _refresh_render_database() -> None:
                 str(script),
                 "--out",
                 str(db_path),
+                "--attempts",
+                "3",
+                "--retry-delay",
+                "5",
             ],
             cwd=root,
             check=True,

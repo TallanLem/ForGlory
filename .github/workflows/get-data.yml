@@ -57,11 +57,24 @@ jobs:
           COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
           DB_PATH: data/db/ratings.sqlite
           MIN_BASELINE_SUCCESS_RATIO: "0.995"
-          COLLECT_RETRIES: "3"
-          COLLECT_CONCURRENCY: "10"
+          COLLECT_RETRIES: "2"
+          ACHIEVEMENT_RETRIES: "1"
+          COLLECT_CONCURRENCY: "40"
+          SYSTEMIC_FAILURE_SAMPLE_SIZE: "200"
           NEW_PLAYER_PROBE_COUNT: "300"
         run: |
           python get_data.py --db-path data/db/ratings.sqlite
+
+      - name: Upload collection diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failed-collection-${{ github.run_id }}
+          path: |
+            data/last_failed_collection.json
+            data/failed_html/
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Locate collection files
         id: collection
@@ -109,6 +122,20 @@ jobs:
           allowUpdates: true
           replacesArtifacts: true
           artifacts: data/db/ratings.sqlite.gz
+
+      - name: Verify the published database is the new one
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          expected="$(basename "${{ steps.collection.outputs.snapshot }}")"
+          rm -f data/db/published.sqlite
+          python tools/fetch_db_from_release.py \
+            --out data/db/published.sqlite \
+            --expect-latest-snapshot "$expected" \
+            --attempts 6 \
+            --retry-delay 10
 
       - name: Trigger Render only after the release is ready
         env:

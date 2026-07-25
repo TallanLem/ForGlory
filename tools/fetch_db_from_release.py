@@ -8,6 +8,7 @@ import os
 import shutil
 import sqlite3
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -71,10 +72,51 @@ def validate(
         conn.close()
 
 
+def fetch_release(repo: str, tag: str, token: str) -> dict:
+    url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+    with urllib.request.urlopen(request(url, token), timeout=30) as response:
+        return json.load(response)
+
+
+def choose_asset(release: dict, preferred: list[str]) -> tuple[str, dict] | None:
+    assets = {
+        asset.get("name"): asset
+        for asset in release.get("assets", [])
+        if asset.get("name")
+    }
+    for name in preferred:
+        if assets.get(name):
+            return name, assets[name]
+    return None
+
+
+def download_asset(asset: dict, token: str, target: Path) -> None:
+    # The browser_download_url can serve a stale cached file when an asset with
+    # the same name is replaced. The API asset URL is tied to the unique asset ID.
+    asset_api_url = str(asset.get("url") or "")
+    if not asset_api_url:
+        asset_id = asset.get("id")
+        if not asset_id:
+            raise RuntimeError("Release asset has no API URL or asset ID")
+        raise RuntimeError(f"Release asset {asset_id} has no API URL")
+
+    with urllib.request.urlopen(
+        request(asset_api_url, token, "application/octet-stream"),
+        timeout=240,
+    ) as response:
+        content_type = str(response.headers.get("Content-Type") or "")
+        if "json" in content_type.casefold():
+            body = response.read(500).decode("utf-8", errors="replace")
+            raise RuntimeError(
+                "GitHub returned JSON instead of the release asset: " + body
+            )
+        with target.open("wb") as output:
+            shutil.copyfileobj(response, output, length=1024 * 1024)
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Stream the latest SQLite release asset to disk"
+        description="Download and validate the latest SQLite release asset"
     )
     parser.add_argument(
         "--repo", default=os.environ.get("GITHUB_REPO", "TallanLem/ForGlory")
@@ -90,82 +132,92 @@ def main() -> int:
     )
     parser.add_argument("--optional", action="store_true")
     parser.add_argument("--require-schema-version", type=int)
+    parser.add_argument("--expect-latest-snapshot")
+    parser.add_argument("--attempts", type=int, default=1)
+    parser.add_argument("--retry-delay", type=float, default=10.0)
     args = parser.parse_args()
 
     token = os.environ.get("GITHUB_TOKEN", "")
-    api_url = f"https://api.github.com/repos/{args.repo}/releases/tags/{args.tag}"
-    try:
-        with urllib.request.urlopen(request(api_url, token), timeout=30) as response:
-            release = json.load(response)
-    except urllib.error.HTTPError as exc:
-        if args.optional and exc.code == 404:
-            print("Database release does not exist yet; continuing without it.")
-            return 0
-        raise
-
     preferred = [args.asset]
     if args.asset.endswith(".gz"):
         preferred.append(args.asset[:-3])
     else:
         preferred.append(args.asset + ".gz")
 
-    assets = {
-        asset.get("name"): asset
-        for asset in release.get("assets", [])
-        if asset.get("name")
-    }
-    asset_name = next(
-        (name for name in preferred if assets.get(name)),
-        None,
-    )
-    if not asset_name:
-        if args.optional:
-            print(
-                f"No supported DB asset found in release {args.tag}; "
-                "continuing without it."
-            )
-            return 0
-        raise SystemExit(
-            f"No supported DB asset found. Tried: {', '.join(preferred)}"
-        )
-
-    asset = assets[asset_name]
-    download_url = str(asset.get("browser_download_url") or "")
-    if not download_url:
-        raise RuntimeError("Release asset has no browser_download_url")
-
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     temp_download = out_path.with_suffix(out_path.suffix + ".download")
     temp_db = out_path.with_suffix(out_path.suffix + ".tmp")
+
+    last_error: Exception | None = None
+    attempts = max(1, args.attempts)
+    for attempt in range(1, attempts + 1):
+        for path in (temp_download, temp_db):
+            path.unlink(missing_ok=True)
+        try:
+            try:
+                release = fetch_release(args.repo, args.tag, token)
+            except urllib.error.HTTPError as exc:
+                if args.optional and exc.code == 404:
+                    print("Database release does not exist yet; continuing without it.")
+                    return 0
+                raise
+
+            selected = choose_asset(release, preferred)
+            if selected is None:
+                if args.optional:
+                    print(
+                        f"No supported DB asset found in release {args.tag}; "
+                        "continuing without it."
+                    )
+                    return 0
+                raise RuntimeError(
+                    f"No supported DB asset found. Tried: {', '.join(preferred)}"
+                )
+
+            asset_name, asset = selected
+            print(
+                f"Downloading {asset_name} from GitHub Release {args.tag}; "
+                f"asset_id={asset.get('id')}, updated_at={asset.get('updated_at')}, "
+                f"attempt={attempt}/{attempts}"
+            )
+            download_asset(asset, token, temp_download)
+
+            if asset_name.endswith(".gz"):
+                with gzip.open(temp_download, "rb") as source, temp_db.open("wb") as target:
+                    shutil.copyfileobj(source, target, length=1024 * 1024)
+            else:
+                os.replace(temp_download, temp_db)
+            temp_download.unlink(missing_ok=True)
+
+            latest_snapshot = validate(temp_db, args.require_schema_version)
+            if (
+                args.expect_latest_snapshot
+                and latest_snapshot != args.expect_latest_snapshot
+            ):
+                raise RuntimeError(
+                    "Published database is stale: "
+                    f"latest_snapshot={latest_snapshot!r}, "
+                    f"expected={args.expect_latest_snapshot!r}"
+                )
+
+            os.replace(temp_db, out_path)
+            print(
+                f"Saved database to {out_path} ({out_path.stat().st_size} bytes); "
+                f"latest_snapshot={latest_snapshot or 'unknown'}"
+            )
+            return 0
+        except Exception as exc:
+            last_error = exc
+            print(f"Database download attempt {attempt}/{attempts} failed: {exc}", file=sys.stderr)
+            if attempt < attempts:
+                time.sleep(max(0.0, args.retry_delay))
+
     for path in (temp_download, temp_db):
         path.unlink(missing_ok=True)
-
-    print(
-        f"Downloading {asset_name} from GitHub Release {args.tag}; "
-        f"asset_id={asset.get('id')}, updated_at={asset.get('updated_at')}"
-    )
-    with urllib.request.urlopen(
-        request(download_url, token, "application/octet-stream"),
-        timeout=180,
-    ) as response:
-        with temp_download.open("wb") as target:
-            shutil.copyfileobj(response, target, length=1024 * 1024)
-
-    if asset_name.endswith(".gz"):
-        with gzip.open(temp_download, "rb") as source, temp_db.open("wb") as target:
-            shutil.copyfileobj(source, target, length=1024 * 1024)
-    else:
-        os.replace(temp_download, temp_db)
-    temp_download.unlink(missing_ok=True)
-
-    latest_snapshot = validate(temp_db, args.require_schema_version)
-    os.replace(temp_db, out_path)
-    print(
-        f"Saved database to {out_path} ({out_path.stat().st_size} bytes); "
-        f"latest_snapshot={latest_snapshot or 'unknown'}"
-    )
-    return 0
+    if last_error is not None:
+        raise last_error
+    return 1
 
 
 if __name__ == "__main__":

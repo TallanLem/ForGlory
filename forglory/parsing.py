@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from urllib.parse import parse_qs, urlparse
 
@@ -11,11 +12,15 @@ from .schema import parse_int
 # Prefer selectors scoped to the actual profile. The generic selector is kept
 # only as a fallback for older page layouts.
 PROFILE_NAME_SELECTORS = (
-    ("[data-player-name]", True),
-    ("#profile [data-player-name]", True),
-    ("#profile p.text-xl", True),
-    ("#profile p.text-center.text-xl", True),
-    ("p.text-center.text-xl", False),
+    "[data-player-name]",
+    "[data-hero-name]",
+    "[data-hero-name-id]",
+    "#profile [data-player-name]",
+    "#profile [data-hero-name]",
+    "#profile p.text-xl",
+    "#profile p.text-center.text-xl",
+    "main p.text-center.text-xl",
+    "p.text-center.text-xl",
 )
 
 # These are interface/interstitial labels, not player names. On 2026-07-24 the
@@ -33,43 +38,121 @@ def normalize_profile_text(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
-def _find_profile_name(soup: BeautifulSoup) -> str | None:
-    for selector, trusted in PROFILE_NAME_SELECTORS:
+def _clean_profile_name(value: object) -> str | None:
+    candidate = " ".join(str(value or "").split()).strip()
+    if not candidate or len(candidate) > 100:
+        return None
+    normalized = normalize_profile_text(candidate)
+    if normalized in PROFILE_UI_LABELS:
+        return None
+    if normalized in {
+        "профиль", "герой", "игрок", "we kings", "wekings",
+        "детали", "достижения", "анкета", "параметры", "статистика",
+        "характеристики",
+    }:
+        return None
+    if ":" in candidate or candidate.isdecimal():
+        return None
+    return candidate
+
+
+def _find_profile_name(soup: BeautifulSoup, hero_id: int | None = None) -> str | None:
+    if hero_id is not None:
+        # Current game layout stores the nickname in the text of a span whose
+        # data-hero-name-id attribute equals the requested player ID.
+        for tag in soup.select(f'[data-hero-name-id="{hero_id}"]'):
+            candidate = _clean_profile_name(tag.get_text(" ", strip=True))
+            if candidate:
+                return candidate
+
+    for selector in PROFILE_NAME_SELECTORS:
         for tag in soup.select(selector):
-            value = tag.get("data-player-name") or tag.get_text(" ", strip=True)
-            if not value:
-                continue
-            candidate = str(value).strip()
-            if not candidate:
-                continue
-            if normalize_profile_text(candidate) in PROFILE_UI_LABELS:
-                continue
+            value = (
+                tag.get("data-player-name")
+                or tag.get("data-hero-name")
+                or tag.get_text(" ", strip=True)
+            )
+            candidate = _clean_profile_name(value)
+            if candidate:
+                return candidate
+
+    if hero_id is not None:
+        link = soup.select_one(
+            f'a[href*="hero/detail?player={hero_id}"], '
+            f'a[href*="hero/detail/{hero_id}"]'
+        )
+        if link:
+            candidate = _clean_profile_name(link.get_text(" ", strip=True))
+            if candidate:
+                return candidate
+
+    for selector, attribute in (
+        ('meta[property="og:title"]', "content"),
+        ('meta[name="twitter:title"]', "content"),
+    ):
+        tag = soup.select_one(selector)
+        if tag:
+            raw = str(tag.get(attribute) or "")
+            for separator in (" | ", " — ", " - "):
+                if separator in raw:
+                    raw = raw.split(separator, 1)[0]
+                    break
+            candidate = _clean_profile_name(raw)
+            if candidate:
+                return candidate
+
+    if soup.title:
+        raw = soup.title.get_text(" ", strip=True)
+        for separator in (" | ", " — ", " - "):
+            if separator in raw:
+                raw = raw.split(separator, 1)[0]
+                break
+        candidate = _clean_profile_name(raw)
+        if candidate:
+            return candidate
+
+    script_pattern = re.compile(
+        r'"(?:playerName|player_name|heroName|hero_name|nickname|nick)"\s*:\s*"((?:\\.|[^"\\])*)"',
+        re.IGNORECASE,
+    )
+    for script in soup.find_all("script"):
+        text = script.string or script.get_text(" ", strip=False)
+        match = script_pattern.search(text or "")
+        if not match:
+            continue
+        try:
+            raw = json.loads(f'"{match.group(1)}"')
+        except (json.JSONDecodeError, TypeError):
+            raw = match.group(1)
+        candidate = _clean_profile_name(raw)
+        if candidate:
             return candidate
     return None
 
 
-def parse_hero(html: str, hero_id: int) -> dict:
+def parse_hero(html: str, hero_id: int, fallback_name: str | None = None) -> dict:
     """Parse one profile page. Missing optional blocks stay missing, not zeroed."""
     soup = BeautifulSoup(html, "html.parser")
-    name = _find_profile_name(soup)
-    if not name:
-        raise ValueError("profile_name_not_found")
-
-    data: dict[str, object] = {"ID": hero_id, "Имя": name}
+    name = _find_profile_name(soup, hero_id)
+    data: dict[str, object] = {"ID": hero_id}
     stat_blocks = soup.select("div#stats div.grid.grid-cols-profileStat")
     if not stat_blocks:
-        # Tolerate harmless wrapper/class changes while requiring the same label/value structure.
-        stat_blocks = soup.select("#stats [data-profile-stat], #stats .profile-stat")
+        # Tolerate wrapper/class changes while still selecting individual rows.
+        stat_blocks = soup.select(
+            "#stats [data-profile-stat], #stats .profile-stat, "
+            "[data-profile-stat], .profile-stat, [class*='grid-cols-profileStat']"
+        )
 
     for block in stat_blocks:
         spans = block.find_all("span", recursive=False)
         if len(spans) < 2:
             spans = block.find_all("span", recursive=True)
-        if len(spans) < 2:
-            continue
-
-        icon = spans[0].find("img")
-        content = spans[1]
+        if len(spans) >= 2:
+            icon = spans[0].find("img")
+            content = spans[1]
+        else:
+            icon = block.find("img")
+            content = block
         content_text = content.get_text(" ", strip=True)
 
         if "Клан:" in content_text:
@@ -121,6 +204,14 @@ def parse_hero(html: str, hero_id: int) -> dict:
     }
     if not stat_blocks or not any(key in data for key in profile_marker_keys):
         raise ValueError("profile_stats_not_found")
+
+    if not name and fallback_name:
+        candidate = str(fallback_name).strip()
+        if candidate and normalize_profile_text(candidate) not in PROFILE_UI_LABELS:
+            name = candidate
+    if not name:
+        raise ValueError("profile_name_not_found")
+    data["Имя"] = name
 
     # These fields are genuinely zero when the page omits them in the current game layout.
     data.setdefault("Чат", 0)

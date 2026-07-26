@@ -174,13 +174,20 @@
     {% endif %}
 
     {% if param == 'По уровню' and mode == 'Общий' %}
+      {% set level5 = namespace(count=0, delta=0) %}
+      {% for group in level_ratings %}
+        {% if group.level >= 5 %}
+          {% set level5.count = level5.count + group.count %}
+          {% set level5.delta = level5.delta + group.count_delta %}
+        {% endif %}
+      {% endfor %}
       <div class="total-line">
-        Всего {{ totals.count }}
-        {% if totals.delta %}<sup class="{{ 'positive' if totals.delta > 0 else 'negative' }}">{{ format_delta(totals.delta) }}</sup>{% endif %}
-        игроков
+        {{ level5.count }}
+        {% if level5.delta %}<sup class="{{ 'positive' if level5.delta > 0 else 'negative' }}">{{ format_delta(level5.delta) }}</sup>{% endif %}
+        игроков 5+ уровня
       </div>
       <div class="level-list">
-        {% for group in level_ratings %}
+        {% for group in level_ratings if group.level >= 5 %}
           <details class="level-card">
             <summary>
               Уровень {{ group.level }} [{{ group.count }}{% if group.count_delta %}<sup class="{{ 'positive' if group.count_delta > 0 else 'negative' }}">{{ format_delta(group.count_delta) }}</sup>{% endif %}]

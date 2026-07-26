@@ -87,7 +87,7 @@ jobs:
             --db data/db/ratings.sqlite \
             --optional
 
-      - name: Collect API players and parse missing or new IDs
+      - name: Collect level 5+ players from endpoint
         env:
           COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
           DB_PATH: data/db/ratings.sqlite
@@ -96,11 +96,6 @@ jobs:
           HEROES_API_RETRY_DELAY_SECONDS: "5"
           HEROES_API_TIMEOUT_SECONDS: "45"
           HEROES_API_MIN_PLAYER_COUNT: "100"
-          COLLECT_RETRIES: "2"
-          ACHIEVEMENT_RETRIES: "1"
-          COLLECT_CONCURRENCY: "40"
-          SYSTEMIC_FAILURE_SAMPLE_SIZE: "200"
-          NEW_PLAYER_PROBE_COUNT: "300"
         run: |
           python collect_api_first.py --db-path data/db/ratings.sqlite
 
@@ -109,9 +104,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: failed-collection-${{ github.run_id }}
-          path: |
-            data/last_failed_collection.json
-            data/failed_html/
+          path: data/last_failed_collection.json
           retention-days: 7
           if-no-files-found: warn
 

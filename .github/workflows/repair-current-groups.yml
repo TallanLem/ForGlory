@@ -2,15 +2,9 @@ name: Repair Current Group Ratings
 
 on:
   workflow_dispatch:
-    inputs:
-      source_run_id:
-        description: "Run ID of the broken Get Player Data run; leave empty to use the latest successful run"
-        required: false
-        type: string
 
 permissions:
   contents: write
-  actions: read
 
 concurrency:
   group: repair-current-group-ratings
@@ -19,7 +13,7 @@ concurrency:
 jobs:
   repair-current-snapshot:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -39,52 +33,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Select source collection run
-        id: source
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REQUESTED_RUN_ID: ${{ inputs.source_run_id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          run_id="${REQUESTED_RUN_ID//[[:space:]]/}"
-          if [ -z "$run_id" ]; then
-            run_id="$(gh run list \
-              --repo "$GITHUB_REPOSITORY" \
-              --workflow get-data.yml \
-              --status success \
-              --limit 1 \
-              --json databaseId \
-              --jq '.[0].databaseId')"
-          fi
-          if ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
-            echo "Could not determine a valid source workflow run ID: $run_id" >&2
-            exit 1
-          fi
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "Using source workflow run: $run_id"
-
-      - name: Download raw snapshot from source run
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p data/repair-source
-          artifact_name="latest-collection-${SOURCE_RUN_ID}"
-          gh run download "$SOURCE_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name "$artifact_name" \
-            --dir data/repair-source
-
-          snapshot="$(find data/repair-source -type f -name 'heroes_*.json.gz' -print -quit)"
-          if [ -z "$snapshot" ]; then
-            echo "Artifact $artifact_name contains no heroes_*.json.gz snapshot" >&2
-            exit 1
-          fi
-          echo "Repair source snapshot: $snapshot"
-
       - name: Restore current published database
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -97,72 +45,76 @@ jobs:
 
       - name: Repair groups in the existing latest snapshot
         id: repair
+        env:
+          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
+          DB_PATH: data/db/ratings.sqlite
+          GROUP_REPAIR_ENDPOINT_ATTEMPTS: "2"
+          GROUP_REPAIR_CONCURRENCY: "40"
+          GROUP_REPAIR_RETRIES: "3"
+          GROUP_REPAIR_MIN_PROFILE_SUCCESS_RATIO: "0.995"
+          GROUP_REPAIR_MIN_PREVIOUS_GROUP_RATIO: "0.70"
         shell: bash
         run: |
           set -euo pipefail
-          snapshot="$(find data/repair-source -type f -name 'heroes_*.json.gz' -print -quit)"
-          expected="$(basename "$snapshot")"
-
-          actual="$(python - <<'PY'
-          import sqlite3
-          conn = sqlite3.connect('data/db/ratings.sqlite')
-          try:
-              row = conn.execute('SELECT filename FROM snapshots ORDER BY ts DESC LIMIT 1').fetchone()
-              print(row[0] if row else '')
-          finally:
-              conn.close()
-          PY
-          )"
-
-          if [ "$actual" != "$expected" ]; then
-            echo "The raw artifact and published latest snapshot do not match." >&2
-            echo "Artifact snapshot:  $expected" >&2
-            echo "Database snapshot:  $actual" >&2
-            echo "Specify source_run_id of the workflow run that created $actual." >&2
-            exit 1
-          fi
-
-          python tools/sync_snapshot_groups.py \
-            --snapshot "$snapshot" \
-            --db data/db/ratings.sqlite
+          python tools/repair_current_groups_from_endpoint.py \
+            --db data/db/ratings.sqlite \
+            --diagnostics data/group_repair_diagnostics.json
 
           python - <<'PY'
+          import os
           import sqlite3
-          conn = sqlite3.connect('data/db/ratings.sqlite')
+
+          conn = sqlite3.connect("data/db/ratings.sqlite")
           try:
-              sid = conn.execute('SELECT snapshot_id FROM snapshots ORDER BY ts DESC LIMIT 1').fetchone()[0]
+              sid, filename = conn.execute(
+                  "SELECT snapshot_id,filename FROM snapshots ORDER BY ts DESC LIMIT 1"
+              ).fetchone()
               clan_members = conn.execute(
-                  'SELECT COUNT(*) FROM observations WHERE snapshot_id=? AND clan_game_id>0',
+                  "SELECT COUNT(*) FROM observations WHERE snapshot_id=? AND clan_game_id>0",
                   (sid,),
               ).fetchone()[0]
               brotherhood_members = conn.execute(
-                  'SELECT COUNT(*) FROM observations WHERE snapshot_id=? AND brotherhood_game_id>0',
+                  "SELECT COUNT(*) FROM observations WHERE snapshot_id=? AND brotherhood_game_id>0",
                   (sid,),
               ).fetchone()[0]
               clans = conn.execute(
-                  'SELECT COUNT(DISTINCT clan_game_id) FROM observations '
-                  'WHERE snapshot_id=? AND clan_game_id>0',
+                  "SELECT COUNT(DISTINCT clan_game_id) FROM observations "
+                  "WHERE snapshot_id=? AND clan_game_id>0",
                   (sid,),
               ).fetchone()[0]
               brotherhoods = conn.execute(
-                  'SELECT COUNT(DISTINCT brotherhood_game_id) FROM observations '
-                  'WHERE snapshot_id=? AND brotherhood_game_id>0',
+                  "SELECT COUNT(DISTINCT brotherhood_game_id) FROM observations "
+                  "WHERE snapshot_id=? AND brotherhood_game_id>0",
                   (sid,),
               ).fetchone()[0]
               print(
-                  f'Latest snapshot groups after repair: '
-                  f'clan_members={clan_members}, clans={clans}, '
-                  f'brotherhood_members={brotherhood_members}, brotherhoods={brotherhoods}'
+                  f"Repaired existing snapshot {filename}: "
+                  f"clan_members={clan_members}, clans={clans}, "
+                  f"brotherhood_members={brotherhood_members}, "
+                  f"brotherhoods={brotherhoods}"
               )
               if clan_members <= 0 or brotherhood_members <= 0:
-                  raise SystemExit('Repair verification failed: group memberships are still empty')
-              if conn.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
-                  raise SystemExit('SQLite quick_check failed')
+                  raise SystemExit("Group repair verification failed")
+              if conn.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+                  raise SystemExit("SQLite quick_check failed")
           finally:
               conn.close()
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"latest_snapshot={filename}\n")
           PY
 
-          echo "latest_snapshot=$expected" >> "$GITHUB_OUTPUT"
+      - name: Upload repair diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-group-repair-diagnostics-${{ github.run_id }}
+          path: |
+            data/group_repair_diagnostics.json
+            data/group_repair_failed_html
+            data/last_failed_collection.json
+          retention-days: 7
+          if-no-files-found: warn
 
       - name: Compress repaired database
         id: database

@@ -1,16 +1,16 @@
 /*
- * Alignment and spacing refinements for all rating tables.
+ * Compact, left-aligned rating layouts that remain fully inside the viewport.
  * Loaded after style.css and responsive-details.css.
  */
 
-/* Consistent left alignment and readable space between columns. */
+/* Common alignment, spacing and nickname/level adjacency. */
 .rating-table th,
 .rating-table td,
 .inner-table th,
 .inner-table td {
   text-align: left !important;
-  padding-left: 8px !important;
-  padding-right: 8px !important;
+  padding-left: 7px !important;
+  padding-right: 7px !important;
 }
 
 .rating-table th:first-child,
@@ -21,7 +21,6 @@
   text-align: left !important;
 }
 
-/* Nickname and level must visually touch in every rating. */
 .wide-name a {
   gap: 0 !important;
 }
@@ -31,11 +30,15 @@
   margin-left: 0 !important;
 }
 
-/* Small safe-area spacing around the dense expandable ratings. */
+/* Safe side gaps without creating horizontal overflow. */
 .level-list,
 .group-table-wrap {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   padding-left: 8px;
   padding-right: 8px;
+  overflow: hidden !important;
 }
 
 .total-line {
@@ -43,199 +46,355 @@
   margin-right: 8px;
 }
 
-.group-table-wrap,
+.level-card,
 .level-card .details,
-.group-details .details {
-  overflow-x: auto !important;
-  -webkit-overflow-scrolling: touch;
+.group-details,
+.group-details .details,
+.group-table-wrap {
+  min-width: 0 !important;
+  max-width: 100% !important;
 }
 
-/* Clan and brotherhood summary: rank | name | players | score. */
-.group-table {
-  min-width: 560px;
+.level-card .details,
+.group-details .details,
+.group-table-wrap {
+  width: 100%;
+  overflow-x: hidden !important;
 }
 
-.group-table th:nth-child(1) {
-  width: 52px;
+/* Clan and brotherhood rating: rank | name | players | score. */
+.rating-table.group-table {
+  display: table !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  table-layout: fixed !important;
 }
 
-.group-table th:nth-child(2) {
+.group-table .group-cell {
+  width: 100%;
+  padding: 0 !important;
+}
+
+.group-table .group-rank-head {
+  width: 8%;
+}
+
+.group-table .group-name-head {
+  width: 40%;
+}
+
+.group-table .group-count-head {
+  width: 18%;
+}
+
+.group-table .group-score-head {
   width: 34%;
 }
 
-.group-table th:nth-child(3) {
-  width: 105px;
+.group-row,
+.group-cell,
+.group-details {
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+.group-details {
+  display: block;
+  width: 100%;
 }
 
 .group-summary {
-  grid-template-columns: 52px minmax(10ch, 32ch) 105px minmax(120px, 1fr) !important;
-  column-gap: 8px;
-  padding: 3px 8px;
+  position: relative;
+  display: grid !important;
+  grid-template-columns: 8% 40% 18% 34% !important;
+  column-gap: 0 !important;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 2px 0;
+  list-style: none;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+.group-summary::marker {
+  content: "";
+}
+
+.group-summary::-webkit-details-marker {
+  display: none;
 }
 
 .group-summary::before {
-  left: 4px !important;
+  content: "›";
+  position: absolute;
+  left: 2px !important;
+  top: 50%;
+  z-index: 1;
+  font-weight: 700;
+  transform: translateY(-50%);
+  transition: transform 0.15s ease;
+}
+
+.group-details[open] > .group-summary::before {
+  transform: translateY(-50%) rotate(90deg);
+}
+
+.group-rank,
+.group-name-block,
+.group-count,
+.group-score {
+  min-width: 0;
+  padding: 3px 5px !important;
+  text-align: left !important;
+  box-sizing: border-box;
 }
 
 .group-rank {
-  padding-left: 10px !important;
-  text-align: left !important;
+  padding-left: 13px !important;
+  white-space: nowrap;
 }
 
 .group-name-block {
-  justify-content: flex-start;
-  text-align: left;
+  display: block !important;
+  overflow: hidden;
 }
 
 .group-name-block .name-ellipsis {
-  flex: 0 1 auto !important;
+  display: block;
+  width: 100%;
   max-width: 100% !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   text-align: left;
 }
 
 .group-count,
 .group-score {
-  padding: 2px 4px !important;
-  text-align: left !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .group-details .details {
-  padding: 0 8px 6px;
+  margin-top: 5px;
+  padding: 0 6px 6px;
 }
 
-/* Expanded clan/brotherhood player rows. */
+/* Players inside an expanded clan or brotherhood. */
 .group-members-table {
-  min-width: 470px !important;
-  table-layout: auto !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  table-layout: fixed !important;
 }
 
 .group-members-table td:first-child {
-  width: 48px !important;
+  width: 10% !important;
+  min-width: 0 !important;
   text-align: left !important;
+  white-space: nowrap;
 }
 
 .group-members-table td:nth-child(2) {
-  width: auto !important;
-  min-width: 180px !important;
+  width: 56% !important;
+  min-width: 0 !important;
   max-width: none !important;
-  overflow: visible !important;
+  overflow: hidden !important;
 }
 
 .group-members-table td:nth-child(3) {
-  width: auto !important;
-  min-width: 120px;
+  width: 34% !important;
+  min-width: 0 !important;
   text-align: left !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .group-members-table .wide-name a {
   display: inline-flex !important;
-  width: auto !important;
-  max-width: 100%;
   align-items: baseline;
+  width: 100% !important;
+  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
+  gap: 0 !important;
 }
 
 .group-members-table .name-ellipsis {
   flex: 0 1 auto !important;
-  max-width: 24ch !important;
+  min-width: 0;
+  max-width: calc(100% - 2.5ch) !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* “By level”: stop crushing the stat columns; scroll when the screen is narrow. */
+.group-members-table .player-level {
+  flex: 0 0 auto;
+  margin-left: 0 !important;
+}
+
+/* “By level”: all seven columns fit within the screen. */
 .level-card {
-  padding-left: 10px !important;
-  padding-right: 10px !important;
+  width: 100%;
+  padding-left: 8px !important;
+  padding-right: 8px !important;
 }
 
 .level-table {
   width: 100% !important;
-  min-width: 660px !important;
-  max-width: none !important;
-  table-layout: auto !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  table-layout: fixed !important;
   text-align: left !important;
 }
 
 .level-table th,
 .level-table td {
+  min-width: 0 !important;
+  padding: 3px 5px !important;
   text-align: left !important;
-  padding: 3px 8px !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .level-table th:first-child,
 .level-table td:first-child {
-  width: 48px !important;
-  min-width: 48px !important;
+  width: 7% !important;
 }
 
 .level-table th:nth-child(2),
 .level-table td:nth-child(2) {
-  width: auto !important;
-  min-width: 190px !important;
+  width: 33% !important;
   max-width: none !important;
-  overflow: visible !important;
   text-align: left !important;
 }
 
 .level-table th:nth-child(n+3),
 .level-table td:nth-child(n+3) {
-  width: 72px;
-  min-width: 72px;
+  width: 12% !important;
   text-align: left !important;
 }
 
 .level-table .wide-name a {
   display: inline-flex !important;
-  width: auto !important;
+  width: 100% !important;
+  min-width: 0;
   max-width: 100%;
+  overflow: hidden;
   gap: 0 !important;
 }
 
 .level-table .name-ellipsis {
   flex: 0 1 auto !important;
-  max-width: 25ch !important;
+  min-width: 0;
+  max-width: 100% !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 620px) {
   .level-list,
   .group-table-wrap {
-    padding-left: 5px;
-    padding-right: 5px;
+    padding-left: 4px;
+    padding-right: 4px;
   }
 
   .total-line {
-    margin-left: 5px;
-    margin-right: 5px;
+    margin-left: 4px;
+    margin-right: 4px;
   }
 
-  .group-summary {
-    grid-template-columns: 42px minmax(9ch, 22ch) 84px minmax(100px, 1fr) !important;
-    column-gap: 5px;
-    padding-left: 5px;
-    padding-right: 5px;
+  .rating-table th,
+  .rating-table td,
+  .inner-table th,
+  .inner-table td {
+    padding-left: 3px !important;
+    padding-right: 3px !important;
   }
 
   .group-table {
-    min-width: 500px;
+    font-size: 0.78em;
+  }
+
+  .group-header-row th {
+    padding-top: 4px !important;
+    padding-bottom: 4px !important;
+  }
+
+  .group-summary {
+    min-height: 31px;
+    font-size: 0.93em;
+  }
+
+  .group-rank,
+  .group-name-block,
+  .group-count,
+  .group-score {
+    padding-left: 3px !important;
+    padding-right: 3px !important;
+  }
+
+  .group-rank {
+    padding-left: 11px !important;
+  }
+
+  .group-summary::before {
+    left: 1px !important;
   }
 
   .group-details .details {
-    padding-left: 5px;
-    padding-right: 5px;
+    padding-left: 4px;
+    padding-right: 4px;
   }
 
-  .level-card {
-    padding-left: 8px !important;
-    padding-right: 8px !important;
-  }
-
-  .level-table {
-    min-width: 620px !important;
+  .group-members-table {
     font-size: 0.78em !important;
   }
 
-  .level-table th,
-  .level-table td,
   .group-members-table td {
+    padding-left: 3px !important;
+    padding-right: 3px !important;
+  }
+
+  .level-card {
     padding-left: 6px !important;
     padding-right: 6px !important;
+  }
+
+  .level-table {
+    font-size: clamp(0.64em, 2.65vw, 0.78em) !important;
+  }
+
+  .level-table th,
+  .level-table td {
+    padding-left: 2px !important;
+    padding-right: 2px !important;
+  }
+
+  .level-table .icon {
+    width: 15px;
+    height: 15px;
+  }
+}
+
+@media (max-width: 350px) {
+  .group-table {
+    font-size: 0.72em;
+  }
+
+  .group-summary {
+    font-size: 0.9em;
+  }
+
+  .level-table {
+    font-size: 0.62em !important;
   }
 }

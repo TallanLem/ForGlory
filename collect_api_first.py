@@ -7,7 +7,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -47,6 +47,73 @@ class ApiCollection:
     endpoint: str
     attempts_used: int
     meta: dict[str, Any]
+
+
+def _read_cookie_records() -> list[dict[str, Any]]:
+    """Load the exported browser cookies without logging their values."""
+    cookies_json = legacy.env_get("COOKIES_JSON", "").strip()
+    try:
+        if cookies_json:
+            raw = json.loads(cookies_json)
+        else:
+            cookie_path = Path(
+                legacy.env_get(
+                    "COOKIES_FILE",
+                    str(legacy.ROOT / "static" / "cfg.json"),
+                )
+            )
+            if not cookie_path.exists():
+                raise ApiCollectionError(
+                    "Cookies are not configured. Set COOKIES_JSON or COOKIES_FILE."
+                )
+            raw = json.loads(cookie_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        raise ApiCollectionError(f"Cannot read cookie configuration: {exc}") from exc
+
+    if not isinstance(raw, list):
+        raise ApiCollectionError("Cookie configuration must be a JSON list")
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def load_cookie_config() -> tuple[dict[str, str], str]:
+    """Build cookies and the game base URL strictly from the cookie export."""
+    raw = _read_cookie_records()
+    cookies = {
+        str(item.get("name")): str(item.get("value"))
+        for item in raw
+        if item.get("name") and item.get("value")
+    }
+    if not cookies:
+        raise ApiCollectionError("Cookie configuration contains no usable cookies")
+
+    session_cookie = next(
+        (
+            item
+            for item in raw
+            if item.get("name") == "wekings_session" and item.get("domain")
+        ),
+        None,
+    )
+    if session_cookie is None:
+        raise ApiCollectionError(
+            "Cookie configuration has no wekings_session cookie with a domain"
+        )
+
+    cookie_domain = str(session_cookie["domain"]).strip().lstrip(".")
+    if not cookie_domain or "/" in cookie_domain or "://" in cookie_domain:
+        raise ApiCollectionError(
+            f"Invalid domain in wekings_session cookie: {cookie_domain!r}"
+        )
+    return cookies, f"https://{cookie_domain}/"
+
+
+def api_endpoint(domain: str) -> str:
+    """Return the current bulk endpoint on the cookie-derived game domain."""
+    parsed = urlparse(str(domain or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ApiCollectionError(f"Invalid cookie-derived game domain: {domain!r}")
+    base = f"{parsed.scheme}://{parsed.netloc}/"
+    return urljoin(base, "heroes/for-glory")
 
 
 def _required_int(value: Any, field: str, row_number: int) -> int:
@@ -155,19 +222,21 @@ def fetch_from_bulk_api(
     timeout_seconds: float,
     min_player_count: int,
 ) -> ApiCollection:
-    api_path = legacy.env_get("HEROES_API_PATH", "/api/heroes/for-glory").strip()
-    if not api_path:
-        api_path = "/api/heroes/for-glory"
-    endpoint = urljoin(domain, api_path.lstrip("/"))
-
+    endpoint = api_endpoint(domain)
     attempts = max(1, attempts)
     retry_delay_seconds = max(0.0, retry_delay_seconds)
     timeout_seconds = max(1.0, timeout_seconds)
     last_error: Exception | None = None
 
+    LOG.info("Bulk heroes endpoint: %s", endpoint)
     with requests.Session() as session:
         session.headers.update(legacy.HEADERS)
-        session.headers.update({"Accept": "application/json"})
+        session.headers.update(
+            {
+                "Accept": "application/json",
+                "Referer": domain,
+            }
+        )
         session.cookies.update(cookies)
 
         for attempt in range(1, attempts + 1):
@@ -199,17 +268,19 @@ def fetch_from_bulk_api(
                 ApiCollectionError,
             ) as exc:
                 last_error = exc
+                status = getattr(getattr(exc, "response", None), "status_code", None)
                 LOG.warning(
-                    "Bulk heroes API attempt %s/%s failed: %s",
+                    "Bulk heroes API attempt %s/%s failed%s: %s",
                     attempt,
                     attempts,
+                    f" with HTTP {status}" if status is not None else "",
                     exc,
                 )
                 if attempt < attempts:
                     time.sleep(retry_delay_seconds * attempt)
 
     raise ApiCollectionError(
-        f"bulk heroes API failed after {attempts} attempts: {last_error}"
+        f"bulk heroes API {endpoint} failed after {attempts} attempts: {last_error}"
     )
 
 
@@ -308,9 +379,88 @@ def _add_hybrid_metadata(
     )
 
 
+def _run_complete_legacy_collection(
+    args: Any,
+    cookies: dict[str, str],
+    domain: str,
+    db_path: Path,
+    api_error: str,
+) -> int:
+    """Run the old collector without the brittle homepage readiness gate."""
+    known_ids, baseline_ids, highest_probed = legacy.load_collection_scope(db_path)
+    known_names = legacy.load_known_names_from_db(db_path)
+    probe_start = highest_probed + 1
+    probe_end = highest_probed + max(0, args.probe_count)
+    ids = [*known_ids, *range(probe_start, probe_end + 1)]
+
+    LOG.warning(
+        "Running complete legacy collection after API failure; ids=%s, "
+        "probe=%s..%s",
+        len(ids),
+        probe_start,
+        probe_end,
+    )
+    results, failures, achievement_failures = asyncio.run(
+        legacy.collect(
+            ids,
+            cookies,
+            domain,
+            args.concurrency,
+            args.retries,
+            known_names=known_names,
+            achievement_retries=args.achievement_retries,
+            systemic_failure_sample_size=args.systemic_failure_sample_size,
+        )
+    )
+
+    baseline_success, ratio = _baseline_ratio(results, baseline_ids)
+    if baseline_ids and ratio < args.min_success_ratio:
+        LOG.error(
+            "Legacy fallback snapshot rejected: baseline success %.2f%% is below "
+            "%.2f%% (%s/%s)",
+            ratio * 100,
+            args.min_success_ratio * 100,
+            baseline_success,
+            len(baseline_ids),
+        )
+        _write_failed_collection(results, failures, baseline_ids, ratio)
+        report = legacy.DATA_DIR / "last_failed_collection.json"
+        payload = json.loads(report.read_text(encoding="utf-8"))
+        payload["collection_source"] = "legacy_fallback_after_api_failure"
+        payload["api_error"] = api_error
+        report.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return 2
+
+    snapshot_path, metadata_path = legacy.save_snapshot(
+        results,
+        failures,
+        achievement_failures,
+        baseline_ids=baseline_ids,
+        known_ids=known_ids,
+        probe_start=probe_start,
+        probe_end=probe_end,
+    )
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.update(
+        {
+            "collection_source": "legacy_fallback_after_api_failure",
+            "api_error": api_error,
+        }
+    )
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    LOG.info("Saved legacy fallback snapshot: %s", snapshot_path)
+    return 0
+
+
 def main() -> int:
     args = legacy.parse_args()
-    cookies, domain = legacy.load_cookie_config()
+    cookies, domain = load_cookie_config()
     db_path = _database_path(args.db_path)
     known_ids, baseline_ids, highest_probed = legacy.load_collection_scope(db_path)
     known_names = legacy.load_known_names_from_db(db_path)
@@ -332,7 +482,13 @@ def main() -> int:
             "Falling back to the complete legacy collector.",
             exc,
         )
-        return legacy.main()
+        return _run_complete_legacy_collection(
+            args,
+            cookies,
+            domain,
+            db_path,
+            str(exc),
+        )
 
     fallback_ids, missing_known_ids, probe_start, probe_end = _fallback_scope(
         set(collection.heroes),

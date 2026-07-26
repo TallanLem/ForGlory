@@ -1,0 +1,240 @@
+/*
+ * Адаптивные раскрывающиеся списки игроков.
+ * Файл подключается после style.css и не меняет остальные страницы.
+ */
+
+.table-wrap,
+.level-card,
+.group-details,
+.group-details .details,
+.level-card .details {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.table-wrap,
+.group-details .details,
+.level-card .details {
+  width: 100%;
+}
+
+/*
+ * В строках кланов и братств summary занимает всю строку таблицы.
+ * Внешняя таблица больше не расширяется из-за вложенного списка игроков.
+ */
+.group-table {
+  width: 100%;
+  max-width: 100%;
+  table-layout: fixed;
+}
+
+.group-table .group-cell {
+  padding: 0;
+}
+
+.group-summary {
+  position: relative;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) max-content;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  list-style: none;
+}
+
+.group-summary::marker {
+  content: "";
+}
+
+.group-summary::-webkit-details-marker {
+  display: none;
+}
+
+.group-summary::before {
+  content: "›";
+  position: absolute;
+  left: 1px;
+  top: 50%;
+  font-weight: 700;
+  transform: translateY(-50%);
+  transition: transform 0.15s ease;
+}
+
+.group-details[open] > .group-summary::before {
+  transform: translateY(-50%) rotate(90deg);
+}
+
+.group-rank {
+  padding-left: 8px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.group-name-block {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.group-name-block .name-ellipsis {
+  flex: 1 1 auto;
+  max-width: none;
+}
+
+.group-count,
+.group-score {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.group-score {
+  padding: 2px 6px;
+  text-align: left;
+}
+
+.group-details .details {
+  margin-top: 5px;
+  overflow-x: hidden;
+}
+
+/* Игроки внутри клана или братства. */
+.group-members-table {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  table-layout: auto;
+}
+
+.group-members-table td:first-child {
+  width: 42px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.group-members-table td:nth-child(2) {
+  width: 100%;
+  min-width: 0;
+  max-width: 0;
+  overflow: hidden;
+}
+
+.group-members-table td:nth-child(3) {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.group-members-table .wide-name a,
+.level-table .wide-name a {
+  width: 100%;
+  min-width: 0;
+}
+
+.group-members-table .name-ellipsis {
+  flex: 1 1 auto;
+  max-width: 100%;
+}
+
+/* Таблицы в разделе «По уровню». */
+.level-card .details {
+  overflow-x: hidden;
+}
+
+.level-table {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  table-layout: auto;
+}
+
+.level-table th,
+.level-table td {
+  white-space: nowrap;
+}
+
+.level-table th:first-child,
+.level-table td:first-child {
+  width: 32px;
+  padding-left: 2px;
+  padding-right: 2px;
+}
+
+.level-table th:nth-child(2),
+.level-table td:nth-child(2) {
+  width: 100%;
+  min-width: 0;
+  max-width: 0;
+  overflow: hidden;
+  text-align: left;
+}
+
+.level-table .wide-name a > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100% !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (min-width: 700px) {
+  /* Перекрывает display:inline-table из основного файла только для групп. */
+  .rating-table.group-table {
+    display: table;
+    width: 100%;
+  }
+}
+
+@media (max-width: 620px) {
+  .group-summary {
+    grid-template-columns: 36px minmax(0, 1fr) max-content;
+    font-size: 0.9em;
+  }
+
+  .group-rank {
+    padding-left: 7px;
+  }
+
+  .group-score {
+    padding-left: 4px;
+    padding-right: 3px;
+  }
+
+  .group-members-table {
+    font-size: 0.76em;
+  }
+
+  .group-members-table td {
+    padding-left: 3px;
+    padding-right: 3px;
+  }
+
+  .group-members-table td:first-child {
+    width: 32px;
+  }
+
+  .level-card {
+    padding-left: 5px;
+    padding-right: 5px;
+  }
+
+  .level-table {
+    font-size: clamp(0.58em, 2.6vw, 0.78em);
+  }
+
+  .level-table th,
+  .level-table td {
+    padding-left: 2px;
+    padding-right: 2px;
+  }
+
+  .level-table th:first-child,
+  .level-table td:first-child {
+    width: 28px;
+  }
+
+  .level-table .icon {
+    width: 16px;
+    height: 16px;
+  }
+}

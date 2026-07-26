@@ -6,6 +6,7 @@
   <title>For Glory!</title>
   <link rel="icon" href="{{ url_for('static', filename='icons/favicon.png') }}" type="image/x-icon">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='responsive-details.css') }}">
   <script>
     if (localStorage.getItem("theme") === "dark") {
       document.documentElement.classList.add("dark");
@@ -226,13 +227,19 @@
           <tbody>
             {% if param.startswith('Кланы') or param.startswith('Братства') %}
               {% for idx, row in enumerate(rating, 1) %}
-                <tr>
-                  <td>{{ '🥇' if idx == 1 else '🥈' if idx == 2 else '🥉' if idx == 3 else idx }}</td>
-                  <td>
+                <tr class="group-row">
+                  <td colspan="3" class="group-cell">
                     <details class="group-details">
-                      <summary><span class="name-ellipsis">{{ row.name }}</span> [{{ row.members|length }}{% if row.count_delta %}<sup class="{{ 'positive' if row.count_delta > 0 else 'negative' }}">{{ format_delta(row.count_delta) }}</sup>{% endif %}]</summary>
+                      <summary class="group-summary">
+                        <span class="group-rank">{{ '🥇' if idx == 1 else '🥈' if idx == 2 else '🥉' if idx == 3 else idx }}</span>
+                        <span class="group-name-block">
+                          <span class="name-ellipsis">{{ row.name }}</span>
+                          <span class="group-count">[{{ row.members|length }}{% if row.count_delta %}<sup class="{{ 'positive' if row.count_delta > 0 else 'negative' }}">{{ format_delta(row.count_delta) }}</sup>{% endif %}]</span>
+                        </span>
+                        <span class="group-score">{{ format_int(row.score) }}{% if row.delta %}<sup class="{{ 'positive' if row.delta > 0 else 'negative' }}">{{ format_delta(row.delta) }}</sup>{% endif %}</span>
+                      </summary>
                       <div class="details table-wrap">
-                        <table class="inner-table">
+                        <table class="inner-table group-members-table">
                           <tbody>
                             {% for hero in row.members %}
                               <tr data-nickname="{{ (hero.name or '')|lower|e }}">
@@ -246,7 +253,6 @@
                       </div>
                     </details>
                   </td>
-                  <td>{{ format_int(row.score) }}{% if row.delta %}<sup class="{{ 'positive' if row.delta > 0 else 'negative' }}">{{ format_delta(row.delta) }}</sup>{% endif %}</td>
                 </tr>
               {% endfor %}
             {% else %}

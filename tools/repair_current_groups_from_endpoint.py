@@ -8,9 +8,17 @@ import logging
 import os
 import random
 import sqlite3
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+# When this file is executed as ``python tools/...py``, Python puts only the
+# tools directory on sys.path. Add the repository root before importing the
+# collector and the forglory package.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import aiohttp
 

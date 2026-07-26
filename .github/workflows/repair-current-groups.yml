@@ -56,7 +56,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python tools/repair_current_groups_from_endpoint.py \
+          python -m tools.repair_current_groups_from_endpoint \
             --db data/db/ratings.sqlite \
             --diagnostics data/group_repair_diagnostics.json
 

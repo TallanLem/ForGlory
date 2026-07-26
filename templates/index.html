@@ -113,16 +113,14 @@
         </div>
 
         <div class="controls-row row-inline">
-          <select name="param" onchange="submitParameterChange(this)">
+          <select name="param" onchange="submitWithLoading(this.form)">
             {% for p in param_selectable %}
               <option value="{{ p }}" {% if p == param %}selected{% endif %}>{{ p }}</option>
             {% endfor %}
           </select>
         </div>
 
-        {% if param == 'По уровню' or param.startswith('Братства') or param.startswith('Кланы') %}
-          <input type="hidden" name="level" value="Все">
-        {% else %}
+        {% if not (param == 'По уровню' or param.startswith('Братства') or param.startswith('Кланы')) %}
           <div class="filter-row search-row">
             <input type="text" id="scroll-nick" list="nicknames" placeholder="Поиск по нику"
                    class="search-input" autocomplete="off" onkeydown="handleSearchEnter(event)">
@@ -185,8 +183,7 @@
         {% endif %}
       {% endfor %}
       <div class="total-line">
-        {{ level5.count }}
-        {% if level5.delta %}<sup class="{{ 'positive' if level5.delta > 0 else 'negative' }}">{{ format_delta(level5.delta) }}</sup>{% endif %}
+        <span class="value-with-delta">{{ level5.count }}{% if level5.delta %}<sup class="{{ 'positive' if level5.delta > 0 else 'negative' }}">{{ format_delta(level5.delta) }}</sup>{% endif %}</span>
         игроков 5+ уровня
       </div>
       <div class="level-list">
@@ -274,11 +271,7 @@
                   <td class="wide-name">
                     <a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank" rel="noopener"><span class="name-ellipsis">{{ row[1] }}</span><sup class="player-level">{{ row[2] }}</sup></a>
                   </td>
-                  <td>
-                    {{ format_int(row[3]) }}
-                    {% if mode == 'Общий' and row[4] is not none and row[4] != 0 %}<sup class="{{ 'positive' if row[4] > 0 else 'negative' }}">{{ format_delta(row[4]) }}</sup>{% endif %}
-                    {% if mode != 'Общий' and row[4] is not none %}<sup class="muted">{{ row[4] }} ⚔</sup>{% endif %}
-                  </td>
+                  <td><span class="value-with-delta">{{ format_int(row[3]) }}{% if mode == 'Общий' and row[4] is not none and row[4] != 0 %}<sup class="{{ 'positive' if row[4] > 0 else 'negative' }}">{{ format_delta(row[4]) }}</sup>{% endif %}{% if mode != 'Общий' and row[4] is not none %}<sup class="muted">{{ row[4] }} ⚔</sup>{% endif %}</span></td>
                 </tr>
               {% endfor %}
             {% endif %}
@@ -302,21 +295,6 @@
       const overlay = document.getElementById("page-loading-overlay");
       overlay?.classList.remove("active");
       overlay?.setAttribute("aria-hidden", "true");
-    }
-
-    function parameterIgnoresLevel(param) {
-      return param === "По уровню"
-        || param.startsWith("Кланы")
-        || param.startsWith("Братства");
-    }
-
-    function submitParameterChange(select) {
-      if (!select || !select.form) return;
-      const levelSelect = select.form.querySelector('select[name="level"]');
-      if (parameterIgnoresLevel(select.value) && levelSelect) {
-        levelSelect.value = "Все";
-      }
-      submitWithLoading(select.form);
     }
 
     function submitWithLoading(form, message = "Загрузка…") {
@@ -357,19 +335,6 @@
     }
 
     document.addEventListener("DOMContentLoaded", () => {
-      const selectedParam = {{ param|tojson }};
-      const currentUrl = new URL(window.location.href);
-      const requestedLevel = currentUrl.searchParams.get("level");
-      if (
-        parameterIgnoresLevel(selectedParam)
-        && requestedLevel
-        && requestedLevel !== "Все"
-      ) {
-        currentUrl.searchParams.set("level", "Все");
-        window.location.replace(currentUrl.toString());
-        return;
-      }
-
       const root = document.documentElement;
       const toggle = document.getElementById("theme-toggle");
       const dark = localStorage.getItem("theme") === "dark";
@@ -459,7 +424,7 @@
         else tbody.innerHTML = data.rows_html || "";
         tbody.dataset.page = String(nextPage);
         if (button) button.style.display = data.has_more ? "inline-block" : "none";
-        if (status) status.textContent = "";
+        if (status) status.textContent = data.has_more ? "" : "Конец списка";
       } catch (error) {
         if (status) status.textContent = "Ошибка загрузки";
         console.error(error);

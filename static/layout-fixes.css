@@ -30,6 +30,27 @@
   margin-left: 0 !important;
 }
 
+
+/* Tight value/delta adjacency and exact header alignment. */
+.rating-table td > sup,
+.inner-table td > sup,
+.group-count > sup,
+.group-score > sup,
+.total-line sup,
+.level-card summary sup,
+.value-with-delta sup {
+  margin-left: 0 !important;
+}
+
+.rating-table thead th,
+.inner-table thead th {
+  text-align: left !important;
+}
+
+.value-with-delta {
+  white-space: nowrap;
+}
+
 /* Safe side gaps without creating horizontal overflow. */
 .level-list,
 .group-table-wrap {
@@ -92,6 +113,19 @@
   width: 34%;
 }
 
+.group-header-row th {
+  padding-top: 1px !important;
+  padding-bottom: 1px !important;
+  padding-left: 2px !important;
+  padding-right: 2px !important;
+  text-align: left !important;
+  line-height: 1.05;
+}
+
+.group-header-row .group-rank-head {
+  padding-left: 13px !important;
+}
+
 .group-row,
 .group-cell,
 .group-details {
@@ -112,8 +146,9 @@
   align-items: center;
   width: 100%;
   min-width: 0;
-  min-height: 34px;
-  padding: 2px 0;
+  min-height: 22px;
+  padding: 0;
+  line-height: 1.05;
   list-style: none;
   visibility: visible !important;
   opacity: 1 !important;
@@ -147,7 +182,8 @@
 .group-count,
 .group-score {
   min-width: 0;
-  padding: 3px 3px !important;
+  padding: 0 2px !important;
+  line-height: 1.05;
   text-align: left !important;
   box-sizing: border-box;
 }
@@ -180,8 +216,8 @@
 }
 
 .group-details .details {
-  margin-top: 5px;
-  padding: 0 6px 6px;
+  margin-top: 1px;
+  padding: 0 2px 2px;
 }
 
 /* Players inside an expanded clan or brotherhood. */
@@ -190,6 +226,13 @@
   min-width: 0 !important;
   max-width: 100% !important;
   table-layout: fixed !important;
+  font-size: 0.88em !important;
+}
+
+.group-members-table td {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  line-height: 1.05;
 }
 
 .group-members-table td:first-child {
@@ -326,12 +369,18 @@
   }
 
   .group-header-row th {
-    padding-top: 4px !important;
-    padding-bottom: 4px !important;
+    padding-top: 1px !important;
+    padding-bottom: 1px !important;
+  }
+
+  .group-header-row .group-rank-head {
+    padding-left: 11px !important;
   }
 
   .group-summary {
-    min-height: 31px;
+    min-height: 22px;
+    padding-top: 0;
+    padding-bottom: 0;
     font-size: 0.93em;
   }
 
@@ -357,12 +406,12 @@
   }
 
   .group-members-table {
-    font-size: 0.78em !important;
+    font-size: 0.90em !important;
   }
 
   .group-members-table td {
-    padding-left: 2px !important;
-    padding-right: 2px !important;
+    padding: 0 2px !important;
+    line-height: 1.05;
   }
 
   .level-card {
@@ -393,6 +442,10 @@
 
   .group-summary {
     font-size: 0.9em;
+  }
+
+  .group-members-table {
+    font-size: 0.95em !important;
   }
 
   .level-table {

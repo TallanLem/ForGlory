@@ -1,0 +1,222 @@
+name: Repair Current Group Ratings
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run ID of the broken Get Player Data run; leave empty to use the latest successful run"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: repair-current-group-ratings
+  cancel-in-progress: false
+
+jobs:
+  repair-current-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Select source collection run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_RUN_ID: ${{ inputs.source_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id="${REQUESTED_RUN_ID//[[:space:]]/}"
+          if [ -z "$run_id" ]; then
+            run_id="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow get-data.yml \
+              --status success \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')"
+          fi
+          if ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
+            echo "Could not determine a valid source workflow run ID: $run_id" >&2
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "Using source workflow run: $run_id"
+
+      - name: Download raw snapshot from source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p data/repair-source
+          artifact_name="latest-collection-${SOURCE_RUN_ID}"
+          gh run download "$SOURCE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$artifact_name" \
+            --dir data/repair-source
+
+          snapshot="$(find data/repair-source -type f -name 'heroes_*.json.gz' -print -quit)"
+          if [ -z "$snapshot" ]; then
+            echo "Artifact $artifact_name contains no heroes_*.json.gz snapshot" >&2
+            exit 1
+          fi
+          echo "Repair source snapshot: $snapshot"
+
+      - name: Restore current published database
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          python tools/fetch_db_from_release.py \
+            --out data/db/ratings.sqlite \
+            --attempts 3 \
+            --retry-delay 5
+
+      - name: Repair groups in the existing latest snapshot
+        id: repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot="$(find data/repair-source -type f -name 'heroes_*.json.gz' -print -quit)"
+          expected="$(basename "$snapshot")"
+
+          actual="$(python - <<'PY'
+          import sqlite3
+          conn = sqlite3.connect('data/db/ratings.sqlite')
+          try:
+              row = conn.execute('SELECT filename FROM snapshots ORDER BY ts DESC LIMIT 1').fetchone()
+              print(row[0] if row else '')
+          finally:
+              conn.close()
+          PY
+          )"
+
+          if [ "$actual" != "$expected" ]; then
+            echo "The raw artifact and published latest snapshot do not match." >&2
+            echo "Artifact snapshot:  $expected" >&2
+            echo "Database snapshot:  $actual" >&2
+            echo "Specify source_run_id of the workflow run that created $actual." >&2
+            exit 1
+          fi
+
+          python tools/sync_snapshot_groups.py \
+            --snapshot "$snapshot" \
+            --db data/db/ratings.sqlite
+
+          python - <<'PY'
+          import sqlite3
+          conn = sqlite3.connect('data/db/ratings.sqlite')
+          try:
+              sid = conn.execute('SELECT snapshot_id FROM snapshots ORDER BY ts DESC LIMIT 1').fetchone()[0]
+              clan_members = conn.execute(
+                  'SELECT COUNT(*) FROM observations WHERE snapshot_id=? AND clan_game_id>0',
+                  (sid,),
+              ).fetchone()[0]
+              brotherhood_members = conn.execute(
+                  'SELECT COUNT(*) FROM observations WHERE snapshot_id=? AND brotherhood_game_id>0',
+                  (sid,),
+              ).fetchone()[0]
+              clans = conn.execute(
+                  'SELECT COUNT(DISTINCT clan_game_id) FROM observations '
+                  'WHERE snapshot_id=? AND clan_game_id>0',
+                  (sid,),
+              ).fetchone()[0]
+              brotherhoods = conn.execute(
+                  'SELECT COUNT(DISTINCT brotherhood_game_id) FROM observations '
+                  'WHERE snapshot_id=? AND brotherhood_game_id>0',
+                  (sid,),
+              ).fetchone()[0]
+              print(
+                  f'Latest snapshot groups after repair: '
+                  f'clan_members={clan_members}, clans={clans}, '
+                  f'brotherhood_members={brotherhood_members}, brotherhoods={brotherhoods}'
+              )
+              if clan_members <= 0 or brotherhood_members <= 0:
+                  raise SystemExit('Repair verification failed: group memberships are still empty')
+              if conn.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
+                  raise SystemExit('SQLite quick_check failed')
+          finally:
+              conn.close()
+          PY
+
+          echo "latest_snapshot=$expected" >> "$GITHUB_OUTPUT"
+
+      - name: Compress repaired database
+        id: database
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/compress_db.py \
+            --db data/db/ratings.sqlite \
+            --out data/db/ratings.sqlite.gz
+
+          digest="$(sha256sum data/db/ratings.sqlite | awk '{print $1}')"
+          count="$(python - <<'PY'
+          import sqlite3
+          conn = sqlite3.connect('data/db/ratings.sqlite')
+          try:
+              print(conn.execute('SELECT COUNT(*) FROM snapshots').fetchone()[0])
+          finally:
+              conn.close()
+          PY
+          )"
+          echo "sha256=$digest" >> "$GITHUB_OUTPUT"
+          echo "snapshot_count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Publish repaired database
+        uses: ncipollo/release-action@v1
+        with:
+          tag: db-latest
+          name: Database (latest)
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: data/db/ratings.sqlite.gz
+
+      - name: Verify repaired release asset
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          rm -f data/db/published-repair.sqlite
+          python tools/fetch_db_from_release.py \
+            --out data/db/published-repair.sqlite \
+            --expect-latest-snapshot "${{ steps.repair.outputs.latest_snapshot }}" \
+            --minimum-snapshot-count "${{ steps.database.outputs.snapshot_count }}" \
+            --expect-sha256 "${{ steps.database.outputs.sha256 }}" \
+            --attempts 6 \
+            --retry-delay 10
+
+      - name: Trigger Render redeploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        shell: bash
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL is not set; redeploy Render manually." >&2
+            exit 1
+          fi
+          curl --fail --silent --show-error --retry 3 --retry-delay 5 \
+            -X GET "$RENDER_DEPLOY_HOOK_URL"

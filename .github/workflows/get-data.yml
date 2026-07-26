@@ -140,6 +140,12 @@ jobs:
             --best-window-days 30 \
             --max-gap-hours 26
 
+      - name: Synchronize and validate clan and brotherhood data
+        run: |
+          python tools/sync_snapshot_groups.py \
+            --snapshot "${{ steps.collection.outputs.snapshot }}" \
+            --db data/db/ratings.sqlite
+
       - name: Verify database history was preserved
         id: built_db
         env:

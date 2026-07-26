@@ -184,6 +184,28 @@ def normalise_api_hero(raw: Any, row_number: int) -> tuple[int, dict]:
     return pid, hero
 
 
+def _group_coverage(heroes: dict[int, dict]) -> dict[str, int]:
+    clan_ids = {
+        int(hero.get("clan_id") or 0)
+        for hero in heroes.values()
+        if int(hero.get("clan_id") or 0) > 0
+    }
+    brotherhood_ids = {
+        int(hero.get("brotherhood_id") or 0)
+        for hero in heroes.values()
+        if int(hero.get("brotherhood_id") or 0) > 0
+    }
+    return {
+        "clan_members": sum(1 for hero in heroes.values() if int(hero.get("clan_id") or 0) > 0),
+        "clans": len(clan_ids),
+        "brotherhood_members": sum(
+            1 for hero in heroes.values() if int(hero.get("brotherhood_id") or 0) > 0
+        ),
+        "brotherhoods": len(brotherhood_ids),
+    }
+
+
+
 def parse_api_payload(
     payload: Any,
     min_player_count: int,
@@ -224,6 +246,14 @@ def parse_api_payload(
         if pid in heroes:
             raise ApiCollectionError(f"API contains duplicate player id {pid}")
         heroes[pid] = hero
+
+    group_coverage = _group_coverage(heroes)
+    if group_coverage["clan_members"] == 0 or group_coverage["brotherhood_members"] == 0:
+        raise ApiCollectionError(
+            "API response contains no usable clan or brotherhood memberships: "
+            f"{group_coverage}"
+        )
+    meta["forglory_group_coverage"] = group_coverage
     return heroes, meta
 
 
@@ -263,10 +293,16 @@ def fetch_from_bulk_api(
                 )
                 response.raise_for_status()
                 heroes, meta = parse_api_payload(response.json(), min_player_count)
+                coverage = _group_coverage(heroes)
                 LOG.info(
-                    "Bulk heroes endpoint succeeded on attempt %s: %s players",
+                    "Bulk heroes endpoint succeeded on attempt %s: %s players; "
+                    "clan members=%s (%s clans), brotherhood members=%s (%s brotherhoods)",
                     attempt,
                     len(heroes),
+                    coverage["clan_members"],
+                    coverage["clans"],
+                    coverage["brotherhood_members"],
+                    coverage["brotherhoods"],
                 )
                 return ApiCollection(
                     heroes=heroes,

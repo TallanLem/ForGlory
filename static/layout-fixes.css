@@ -9,8 +9,8 @@
 .inner-table th,
 .inner-table td {
   text-align: left !important;
-  padding-left: 7px !important;
-  padding-right: 7px !important;
+  padding-left: 4px !important;
+  padding-right: 4px !important;
 }
 
 .rating-table th:first-child,
@@ -147,7 +147,7 @@
 .group-count,
 .group-score {
   min-width: 0;
-  padding: 3px 5px !important;
+  padding: 3px 3px !important;
   text-align: left !important;
   box-sizing: border-box;
 }
@@ -252,12 +252,13 @@
   max-width: 100% !important;
   table-layout: fixed !important;
   text-align: left !important;
+  font-size: 0.88em !important;
 }
 
 .level-table th,
 .level-table td {
   min-width: 0 !important;
-  padding: 3px 5px !important;
+  padding: 3px 3px !important;
   text-align: left !important;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -316,8 +317,8 @@
   .rating-table td,
   .inner-table th,
   .inner-table td {
-    padding-left: 3px !important;
-    padding-right: 3px !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
   }
 
   .group-table {
@@ -338,8 +339,8 @@
   .group-name-block,
   .group-count,
   .group-score {
-    padding-left: 3px !important;
-    padding-right: 3px !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
   }
 
   .group-rank {
@@ -360,8 +361,8 @@
   }
 
   .group-members-table td {
-    padding-left: 3px !important;
-    padding-right: 3px !important;
+    padding-left: 2px !important;
+    padding-right: 2px !important;
   }
 
   .level-card {
@@ -370,13 +371,13 @@
   }
 
   .level-table {
-    font-size: clamp(0.64em, 2.65vw, 0.78em) !important;
+    font-size: clamp(0.70em, 2.9vw, 0.82em) !important;
   }
 
   .level-table th,
   .level-table td {
-    padding-left: 2px !important;
-    padding-right: 2px !important;
+    padding-left: 1px !important;
+    padding-right: 1px !important;
   }
 
   .level-table .icon {
@@ -395,6 +396,6 @@
   }
 
   .level-table {
-    font-size: 0.62em !important;
+    font-size: 0.68em !important;
   }
 }

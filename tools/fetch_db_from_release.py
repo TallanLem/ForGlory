@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
 import os
 import shutil
@@ -31,10 +32,18 @@ def request(
     return urllib.request.Request(url, headers=headers)
 
 
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def validate(
     path: Path,
     required_schema_version: int | None = None,
-) -> str | None:
+) -> tuple[str | None, int, str]:
     with path.open("rb") as handle:
         header = handle.read(16)
     if header != b"SQLite format 3\x00":
@@ -65,9 +74,13 @@ def validate(
             row = conn.execute(
                 "SELECT filename FROM snapshots ORDER BY ts DESC LIMIT 1"
             ).fetchone()
+            snapshot_count = int(
+                conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0]
+            )
         except sqlite3.Error:
             row = None
-        return str(row[0]) if row else None
+            snapshot_count = 0
+        return (str(row[0]) if row else None, snapshot_count, file_sha256(path))
     finally:
         conn.close()
 
@@ -133,6 +146,8 @@ def main() -> int:
     parser.add_argument("--optional", action="store_true")
     parser.add_argument("--require-schema-version", type=int)
     parser.add_argument("--expect-latest-snapshot")
+    parser.add_argument("--expect-sha256")
+    parser.add_argument("--minimum-snapshot-count", type=int)
     parser.add_argument("--attempts", type=int, default=1)
     parser.add_argument("--retry-delay", type=float, default=10.0)
     args = parser.parse_args()
@@ -190,7 +205,9 @@ def main() -> int:
                 os.replace(temp_download, temp_db)
             temp_download.unlink(missing_ok=True)
 
-            latest_snapshot = validate(temp_db, args.require_schema_version)
+            latest_snapshot, snapshot_count, database_sha256 = validate(
+                temp_db, args.require_schema_version
+            )
             if (
                 args.expect_latest_snapshot
                 and latest_snapshot != args.expect_latest_snapshot
@@ -200,11 +217,29 @@ def main() -> int:
                     f"latest_snapshot={latest_snapshot!r}, "
                     f"expected={args.expect_latest_snapshot!r}"
                 )
+            if (
+                args.minimum_snapshot_count is not None
+                and snapshot_count < args.minimum_snapshot_count
+            ):
+                raise RuntimeError(
+                    "Published database lost history: "
+                    f"snapshot_count={snapshot_count}, "
+                    f"minimum={args.minimum_snapshot_count}"
+                )
+            if (
+                args.expect_sha256
+                and database_sha256.casefold() != args.expect_sha256.casefold()
+            ):
+                raise RuntimeError(
+                    "Published database content differs from the local database: "
+                    f"sha256={database_sha256}, expected={args.expect_sha256}"
+                )
 
             os.replace(temp_db, out_path)
             print(
                 f"Saved database to {out_path} ({out_path.stat().st_size} bytes); "
-                f"latest_snapshot={latest_snapshot or 'unknown'}"
+                f"latest_snapshot={latest_snapshot or 'unknown'}, "
+                f"snapshot_count={snapshot_count}, sha256={database_sha256}"
             )
             return 0
         except Exception as exc:

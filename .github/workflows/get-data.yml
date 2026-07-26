@@ -40,11 +40,46 @@ jobs:
           python -m unittest discover -s tests -v
 
       - name: Restore the previous database release
+        id: restored_db
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPO: ${{ github.repository }}
+        shell: bash
         run: |
           python tools/fetch_db_from_release.py --optional --out data/db/ratings.sqlite
+          python - <<'PY'
+          import hashlib
+          import os
+          import sqlite3
+          from pathlib import Path
+
+          path = Path("data/db/ratings.sqlite")
+          if not path.exists():
+              count = 0
+              latest = ""
+              digest = ""
+          else:
+              conn = sqlite3.connect(path)
+              try:
+                  count = int(conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0])
+                  row = conn.execute(
+                      "SELECT filename FROM snapshots ORDER BY ts DESC LIMIT 1"
+                  ).fetchone()
+                  latest = str(row[0]) if row else ""
+              finally:
+                  conn.close()
+              sha = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      sha.update(chunk)
+              digest = sha.hexdigest()
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"snapshot_count={count}\n")
+              output.write(f"latest_snapshot={latest}\n")
+              output.write(f"sha256={digest}\n")
+          print(f"Restored database: snapshots={count}, latest={latest}, sha256={digest}")
+          PY
 
       - name: Repair corrupted names in the restored database
         run: |
@@ -90,14 +125,14 @@ jobs:
           python tools/profile_name_guard.py validate-snapshot \
             --snapshot "${{ steps.collection.outputs.snapshot }}"
 
-      - name: Back up the raw collection for seven days
+      - name: Back up the raw collection for thirty days
         uses: actions/upload-artifact@v4
         with:
           name: latest-collection-${{ github.run_id }}
           path: |
             ${{ steps.collection.outputs.snapshot }}
             ${{ steps.collection.outputs.metadata }}
-          retention-days: 7
+          retention-days: 30
           if-no-files-found: error
 
       - name: Incrementally update SQLite
@@ -108,11 +143,75 @@ jobs:
             --best-window-days 30 \
             --max-gap-hours 26
 
+      - name: Verify database history was preserved
+        id: built_db
+        env:
+          RESTORED_SNAPSHOT_COUNT: ${{ steps.restored_db.outputs.snapshot_count }}
+          RESTORED_LATEST_SNAPSHOT: ${{ steps.restored_db.outputs.latest_snapshot }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          import sqlite3
+          from pathlib import Path
+
+          path = Path("data/db/ratings.sqlite")
+          restored_count = int(os.environ.get("RESTORED_SNAPSHOT_COUNT") or 0)
+          restored_latest = os.environ.get("RESTORED_LATEST_SNAPSHOT") or ""
+
+          conn = sqlite3.connect(path)
+          try:
+              count = int(conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0])
+              row = conn.execute(
+                  "SELECT filename FROM snapshots ORDER BY ts DESC LIMIT 1"
+              ).fetchone()
+              latest = str(row[0]) if row else ""
+              if restored_count and count < restored_count + 1:
+                  raise RuntimeError(
+                      f"Database history was lost: restored={restored_count}, built={count}"
+                  )
+              if restored_latest:
+                  exists = conn.execute(
+                      "SELECT 1 FROM snapshots WHERE filename=?",
+                      (restored_latest,),
+                  ).fetchone()
+                  if not exists:
+                      raise RuntimeError(
+                          f"Previous latest snapshot disappeared: {restored_latest}"
+                      )
+              check = conn.execute("PRAGMA quick_check").fetchone()[0]
+              if check != "ok":
+                  raise RuntimeError(f"SQLite quick_check failed: {check}")
+          finally:
+              conn.close()
+
+          sha = hashlib.sha256()
+          with path.open("rb") as handle:
+              for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                  sha.update(chunk)
+          digest = sha.hexdigest()
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"snapshot_count={count}\n")
+              output.write(f"latest_snapshot={latest}\n")
+              output.write(f"sha256={digest}\n")
+          print(f"Built database: snapshots={count}, latest={latest}, sha256={digest}")
+          PY
+
       - name: Compress and validate SQLite
         run: |
           python tools/compress_db.py \
             --db data/db/ratings.sqlite \
             --out data/db/ratings.sqlite.gz
+
+      - name: Back up the complete database for thirty days
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-backup-${{ github.run_id }}
+          path: data/db/ratings.sqlite.gz
+          retention-days: 30
+          if-no-files-found: error
 
       - name: Publish the database in GitHub Release
         uses: ncipollo/release-action@v1
@@ -134,6 +233,8 @@ jobs:
           python tools/fetch_db_from_release.py \
             --out data/db/published.sqlite \
             --expect-latest-snapshot "$expected" \
+            --minimum-snapshot-count "${{ steps.built_db.outputs.snapshot_count }}" \
+            --expect-sha256 "${{ steps.built_db.outputs.sha256 }}" \
             --attempts 6 \
             --retry-delay 10
 

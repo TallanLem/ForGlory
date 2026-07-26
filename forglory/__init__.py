@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -156,4 +157,93 @@ def _refresh_render_database() -> None:
         print("Render startup: SQLite refresh completed.", flush=True)
 
 
+def _normalize_sql(sql: str) -> str:
+    compact = " ".join(str(sql).split()).casefold()
+    return re.sub(r"\s*,\s*", ",", compact)
+
+
+_BALANCE_MAX_QUERY = _normalize_sql(
+    """
+    SELECT level,
+           MAX(strength) AS strength,
+           MAX(defense) AS defense,
+           MAX(dexterity) AS dexterity,
+           MAX(mastery) AS mastery,
+           MAX(vitality) AS vitality
+    FROM observations
+    WHERE snapshot_id=? AND level IS NOT NULL
+    GROUP BY level
+    """
+)
+
+_BALANCE_TOP10_AVERAGE_QUERY = """
+WITH ranked AS (
+    SELECT
+        level,
+        strength,
+        defense,
+        dexterity,
+        mastery,
+        vitality,
+        ROW_NUMBER() OVER (
+            PARTITION BY level ORDER BY strength DESC, pid ASC
+        ) AS strength_rank,
+        ROW_NUMBER() OVER (
+            PARTITION BY level ORDER BY defense DESC, pid ASC
+        ) AS defense_rank,
+        ROW_NUMBER() OVER (
+            PARTITION BY level ORDER BY dexterity DESC, pid ASC
+        ) AS dexterity_rank,
+        ROW_NUMBER() OVER (
+            PARTITION BY level ORDER BY mastery DESC, pid ASC
+        ) AS mastery_rank,
+        ROW_NUMBER() OVER (
+            PARTITION BY level ORDER BY vitality DESC, pid ASC
+        ) AS vitality_rank
+    FROM observations
+    WHERE snapshot_id=? AND level IS NOT NULL
+)
+SELECT
+    level,
+    AVG(CASE WHEN strength_rank <= 10 THEN strength END) AS strength,
+    AVG(CASE WHEN defense_rank <= 10 THEN defense END) AS defense,
+    AVG(CASE WHEN dexterity_rank <= 10 THEN dexterity END) AS dexterity,
+    AVG(CASE WHEN mastery_rank <= 10 THEN mastery END) AS mastery,
+    AVG(CASE WHEN vitality_rank <= 10 THEN vitality END) AS vitality
+FROM ranked
+GROUP BY level
+"""
+
+
+def _install_balance_top10_query() -> None:
+    """Use the top-10 average for the Ritual of Balance 75% cap.
+
+    ``app.query_level_balance`` historically requests MAX() values and then
+    multiplies them by 75%. The game description instead limits every stat to
+    75% of the average of the ten strongest values on the current level. The
+    connection subclass rewrites only that exact read-only aggregate query;
+    all other SQLite statements retain their normal behaviour.
+    """
+    if getattr(sqlite3.connect, "_forglory_balance_top10", False):
+        return
+
+    original_connect = sqlite3.connect
+
+    class ForGloryConnection(sqlite3.Connection):
+        def execute(self, sql, parameters=()):  # type: ignore[override]
+            normalized = _normalize_sql(sql)
+            if normalized == _BALANCE_MAX_QUERY:
+                sql = _BALANCE_TOP10_AVERAGE_QUERY
+            return super().execute(sql, parameters)
+
+    def connect_with_balance_top10(*args, **kwargs):
+        kwargs.setdefault("factory", ForGloryConnection)
+        return original_connect(*args, **kwargs)
+
+    connect_with_balance_top10._forglory_balance_top10 = True
+    connect_with_balance_top10.__wrapped__ = original_connect
+    sqlite3.connect = connect_with_balance_top10
+
+
 _refresh_render_database()
+_install_balance_top10_query()

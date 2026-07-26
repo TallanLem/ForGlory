@@ -1,24 +1,16 @@
-
 {% for player in players %}
 <tr data-nickname="{{ (player.name or '')|lower|e }}">
-  <td style="text-align:center; white-space:nowrap;">
-    <span style="display:inline-block; min-width:1.5ch; padding:0 4px; box-sizing:border-box;">
-      {% set idx = start_index + loop.index %}
-      {% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}
-    </span>
+  <td class="rank-cell">
+    {% set idx = start_index + loop.index %}
+    {% if idx == 1 %}🥇{% elif idx == 2 %}🥈{% elif idx == 3 %}🥉{% else %}{{ idx }}{% endif %}
   </td>
-  <td class="wide-name shorten" style="text-align: left; padding-right: 6px;">
-    <a href="https://playwekings.mobi/hero/detail?player={{ player.pid }}" target="_blank"
-       style="display: inline-flex; width: 100%; overflow: hidden;">
-      <span style="flex:1 1 auto; min-width:0; max-width:15ch; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block;">
-        {{ player.name }}
-      </span>
-    </a>
+  <td class="wide-name shorten">
+    <a href="https://playwekings.mobi/hero/detail?player={{ player.pid }}" target="_blank" rel="noopener"><span class="name-ellipsis">{{ player.name }}</span></a>
   </td>
-  <td class="tight" style="text-align:center;">{{ player.strength }}</td>
-  <td class="tight" style="text-align:center;">{{ player.defense }}</td>
-  <td class="tight" style="text-align:center;">{{ player.dexterity }}</td>
-  <td class="tight" style="text-align:center;">{{ player.mastery }}</td>
-  <td class="tight" style="text-align:center;">{{ player.vitality }}</td>
+  <td class="tight stat-cell">{{ player.strength }}</td>
+  <td class="tight stat-cell">{{ player.defense }}</td>
+  <td class="tight stat-cell">{{ player.dexterity }}</td>
+  <td class="tight stat-cell">{{ player.mastery }}</td>
+  <td class="tight stat-cell">{{ player.vitality }}</td>
 </tr>
 {% endfor %}

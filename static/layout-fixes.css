@@ -1,0 +1,241 @@
+/*
+ * Alignment and spacing refinements for all rating tables.
+ * Loaded after style.css and responsive-details.css.
+ */
+
+/* Consistent left alignment and readable space between columns. */
+.rating-table th,
+.rating-table td,
+.inner-table th,
+.inner-table td {
+  text-align: left !important;
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+
+.rating-table th:first-child,
+.rating-table td:first-child,
+.inner-table th:first-child,
+.inner-table td:first-child,
+.rank-cell {
+  text-align: left !important;
+}
+
+/* Nickname and level must visually touch in every rating. */
+.wide-name a {
+  gap: 0 !important;
+}
+
+.player-level,
+.name-ellipsis + .player-level {
+  margin-left: 0 !important;
+}
+
+/* Small safe-area spacing around the dense expandable ratings. */
+.level-list,
+.group-table-wrap {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.total-line {
+  margin-left: 8px;
+  margin-right: 8px;
+}
+
+.group-table-wrap,
+.level-card .details,
+.group-details .details {
+  overflow-x: auto !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Clan and brotherhood summary: rank | name | players | score. */
+.group-table {
+  min-width: 560px;
+}
+
+.group-table th:nth-child(1) {
+  width: 52px;
+}
+
+.group-table th:nth-child(2) {
+  width: 34%;
+}
+
+.group-table th:nth-child(3) {
+  width: 105px;
+}
+
+.group-summary {
+  grid-template-columns: 52px minmax(10ch, 32ch) 105px minmax(120px, 1fr) !important;
+  column-gap: 8px;
+  padding: 3px 8px;
+}
+
+.group-summary::before {
+  left: 4px !important;
+}
+
+.group-rank {
+  padding-left: 10px !important;
+  text-align: left !important;
+}
+
+.group-name-block {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.group-name-block .name-ellipsis {
+  flex: 0 1 auto !important;
+  max-width: 100% !important;
+  text-align: left;
+}
+
+.group-count,
+.group-score {
+  padding: 2px 4px !important;
+  text-align: left !important;
+}
+
+.group-details .details {
+  padding: 0 8px 6px;
+}
+
+/* Expanded clan/brotherhood player rows. */
+.group-members-table {
+  min-width: 470px !important;
+  table-layout: auto !important;
+}
+
+.group-members-table td:first-child {
+  width: 48px !important;
+  text-align: left !important;
+}
+
+.group-members-table td:nth-child(2) {
+  width: auto !important;
+  min-width: 180px !important;
+  max-width: none !important;
+  overflow: visible !important;
+}
+
+.group-members-table td:nth-child(3) {
+  width: auto !important;
+  min-width: 120px;
+  text-align: left !important;
+}
+
+.group-members-table .wide-name a {
+  display: inline-flex !important;
+  width: auto !important;
+  max-width: 100%;
+  align-items: baseline;
+  overflow: hidden;
+}
+
+.group-members-table .name-ellipsis {
+  flex: 0 1 auto !important;
+  max-width: 24ch !important;
+}
+
+/* “By level”: stop crushing the stat columns; scroll when the screen is narrow. */
+.level-card {
+  padding-left: 10px !important;
+  padding-right: 10px !important;
+}
+
+.level-table {
+  width: 100% !important;
+  min-width: 660px !important;
+  max-width: none !important;
+  table-layout: auto !important;
+  text-align: left !important;
+}
+
+.level-table th,
+.level-table td {
+  text-align: left !important;
+  padding: 3px 8px !important;
+}
+
+.level-table th:first-child,
+.level-table td:first-child {
+  width: 48px !important;
+  min-width: 48px !important;
+}
+
+.level-table th:nth-child(2),
+.level-table td:nth-child(2) {
+  width: auto !important;
+  min-width: 190px !important;
+  max-width: none !important;
+  overflow: visible !important;
+  text-align: left !important;
+}
+
+.level-table th:nth-child(n+3),
+.level-table td:nth-child(n+3) {
+  width: 72px;
+  min-width: 72px;
+  text-align: left !important;
+}
+
+.level-table .wide-name a {
+  display: inline-flex !important;
+  width: auto !important;
+  max-width: 100%;
+  gap: 0 !important;
+}
+
+.level-table .name-ellipsis {
+  flex: 0 1 auto !important;
+  max-width: 25ch !important;
+}
+
+@media (max-width: 620px) {
+  .level-list,
+  .group-table-wrap {
+    padding-left: 5px;
+    padding-right: 5px;
+  }
+
+  .total-line {
+    margin-left: 5px;
+    margin-right: 5px;
+  }
+
+  .group-summary {
+    grid-template-columns: 42px minmax(9ch, 22ch) 84px minmax(100px, 1fr) !important;
+    column-gap: 5px;
+    padding-left: 5px;
+    padding-right: 5px;
+  }
+
+  .group-table {
+    min-width: 500px;
+  }
+
+  .group-details .details {
+    padding-left: 5px;
+    padding-right: 5px;
+  }
+
+  .level-card {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  .level-table {
+    min-width: 620px !important;
+    font-size: 0.78em !important;
+  }
+
+  .level-table th,
+  .level-table td,
+  .group-members-table td {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+  }
+}

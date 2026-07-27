@@ -92,7 +92,7 @@ jobs:
           python tools/ensure_observation_columns.py \
             --db data/db/ratings.sqlite
 
-      - name: Collect level 5+ players from endpoint with profile fallback
+      - name: Collect players from endpoint, groups from rosters, profiles only as endpoint fallback
         env:
           COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
           DB_PATH: data/db/ratings.sqlite

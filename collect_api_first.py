@@ -6,6 +6,7 @@ import logging
 import re
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -658,57 +659,78 @@ def apply_group_rosters(
     }
 
 
-def enrich_groups_when_missing(
+def replace_groups_from_rosters(
     collection: ApiCollection,
     domain: str,
     cookies: dict[str, str],
 ) -> None:
-    coverage = _group_coverage(collection.heroes)
-    missing_kinds: list[str] = []
-    if coverage["clan_members"] == 0:
-        missing_kinds.append("clan")
-    if coverage["brotherhood_members"] == 0:
-        missing_kinds.append("brotherhood")
-    if not missing_kinds:
-        LOG.info("Endpoint contains clan and brotherhood memberships; roster scan skipped")
-        return
+    """Replace endpoint memberships with authoritative warriors-page rosters.
 
-    LOG.warning(
-        "Endpoint group fields are missing or empty: coverage=%s, schema=%s. "
-        "Reconstructing memberships from warriors pages.",
-        coverage,
-        collection.meta.get("forglory_endpoint_schema"),
+    The endpoint remains the primary and fast source for the complete level-5+
+    player dataset. Clan and brotherhood membership is deliberately rebuilt
+    from the much smaller sequential roster scans, even when the endpoint starts
+    returning group fields again. Profile-page collection is not used here.
+    """
+    endpoint_coverage = _group_coverage(collection.heroes)
+    LOG.info(
+        "Refreshing clan and brotherhood memberships from warriors pages; "
+        "endpoint coverage before replacement=%s",
+        endpoint_coverage,
     )
+
+    scan_options = {
+        "timeout_seconds": float(
+            legacy.env_get("GROUP_SCAN_TIMEOUT_SECONDS", "30")
+        ),
+        "attempts": int(legacy.env_get("GROUP_SCAN_ATTEMPTS", "3")),
+        "retry_delay_seconds": float(
+            legacy.env_get("GROUP_SCAN_RETRY_DELAY_SECONDS", "2")
+        ),
+        "maximum_id": int(legacy.env_get("GROUP_SCAN_MAX_ID", "5000")),
+    }
+
+    # Clan and brotherhood ID sequences are independent, so two low-volume
+    # scans can run in parallel without turning this into a profile flood.
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {
+            group_kind: executor.submit(
+                scan_group_rosters,
+                domain,
+                cookies,
+                group_kind,
+                **scan_options,
+            )
+            for group_kind in ("clan", "brotherhood")
+        }
+        rosters_by_kind = {
+            group_kind: future.result()
+            for group_kind, future in futures.items()
+        }
+
     scan_meta: dict[str, Any] = {}
-    for group_kind in missing_kinds:
-        rosters = scan_group_rosters(
-            domain,
-            cookies,
-            group_kind,
-            timeout_seconds=float(
-                legacy.env_get("GROUP_SCAN_TIMEOUT_SECONDS", "30")
-            ),
-            attempts=int(legacy.env_get("GROUP_SCAN_ATTEMPTS", "3")),
-            retry_delay_seconds=float(
-                legacy.env_get("GROUP_SCAN_RETRY_DELAY_SECONDS", "2")
-            ),
-            maximum_id=int(legacy.env_get("GROUP_SCAN_MAX_ID", "5000")),
-        )
+    for group_kind in ("clan", "brotherhood"):
         scan_meta[group_kind] = apply_group_rosters(
             collection.heroes,
             group_kind,
-            rosters,
+            rosters_by_kind[group_kind],
         )
 
     coverage = _group_coverage(collection.heroes)
     if coverage["clan_members"] == 0 or coverage["brotherhood_members"] == 0:
         raise ApiCollectionError(
-            "Roster reconstruction produced no usable clan or brotherhood data: "
+            "Warriors-page scans produced no usable clan or brotherhood data: "
             f"coverage={coverage}, scan={scan_meta}"
         )
+
+    collection.meta["forglory_endpoint_group_coverage"] = endpoint_coverage
+    collection.meta["forglory_group_source"] = "warriors_pages"
     collection.meta["forglory_group_roster_scan"] = scan_meta
     collection.meta["forglory_group_coverage"] = coverage
-    LOG.info("Roster reconstruction succeeded: coverage=%s, scan=%s", coverage, scan_meta)
+    LOG.info(
+        "Warriors-page group replacement succeeded: coverage=%s, scan=%s",
+        coverage,
+        scan_meta,
+    )
 
 
 def _save_legacy_fallback_snapshot(
@@ -944,6 +966,17 @@ def main() -> int:
         return 2
 
     try:
+        previous_ids, previous_snapshot = load_previous_level5_ids(db_path)
+    except ApiCollectionError as exc:
+        LOG.exception("Cannot load the previous level-5+ baseline: %s", exc)
+        write_failure_report(str(exc), endpoint=api_endpoint(domain))
+        return 2
+
+    # Only failures of the bulk endpoint itself (including an incomplete or
+    # structurally invalid payload) are allowed to activate the expensive
+    # profile collector. Missing clan/brotherhood fields are not endpoint
+    # failures because those memberships are always collected from roster pages.
+    try:
         collection = fetch_from_bulk_api(
             domain,
             cookies,
@@ -954,8 +987,6 @@ def main() -> int:
             timeout_seconds=float(legacy.env_get("HEROES_API_TIMEOUT_SECONDS", "45")),
             min_player_count=int(legacy.env_get("HEROES_API_MIN_PLAYER_COUNT", "100")),
         )
-        enrich_groups_when_missing(collection, domain, cookies)
-        previous_ids, previous_snapshot = load_previous_level5_ids(db_path)
 
         retained_count, retained_ratio = _coverage_ratio(
             set(collection.heroes),
@@ -967,29 +998,9 @@ def main() -> int:
                 f"{retained_ratio:.2%} is below {args.min_success_ratio:.2%} "
                 f"({retained_count}/{len(previous_ids)})"
             )
-
-        snapshot_path, metadata_path = save_api_snapshot(
-            collection,
-            previous_ids,
-            previous_snapshot,
-            retained_count,
-            retained_ratio,
-        )
-        LOG.info("Saved level-5+ API snapshot: %s", snapshot_path)
-        LOG.info("Saved level-5+ API metadata: %s", metadata_path)
-        LOG.info(
-            "Collection complete from endpoint: players=%s, "
-            "retained previous level-5+=%.2f%% (%s/%s), groups=%s",
-            len(collection.heroes),
-            retained_ratio * 100,
-            retained_count,
-            len(previous_ids),
-            _group_coverage(collection.heroes),
-        )
-        return 0
     except ApiCollectionError as endpoint_error:
         LOG.exception(
-            "Endpoint-first collection failed; switching to profile fallback: %s",
+            "Bulk endpoint is unavailable or unusable; switching to profile fallback: %s",
             endpoint_error,
         )
         try:
@@ -1011,6 +1022,46 @@ def main() -> int:
             LOG.exception(error)
             write_failure_report(error, endpoint=api_endpoint(domain))
             return 2
+
+    # From this point the endpoint has succeeded. Any roster/database failure is
+    # reported as a failure and must never launch tens of thousands of profiles.
+    try:
+        replace_groups_from_rosters(collection, domain, cookies)
+        snapshot_path, metadata_path = save_api_snapshot(
+            collection,
+            previous_ids,
+            previous_snapshot,
+            retained_count,
+            retained_ratio,
+        )
+    except Exception as post_endpoint_error:
+        error = (
+            "Bulk endpoint succeeded, but roster enrichment or snapshot saving "
+            f"failed: {post_endpoint_error}"
+        )
+        LOG.exception(error)
+        write_failure_report(
+            error,
+            endpoint=collection.endpoint,
+            current_count=len(collection.heroes),
+            previous_count=len(previous_ids),
+            retained_count=retained_count,
+            retained_ratio=retained_ratio,
+        )
+        return 2
+
+    LOG.info("Saved level-5+ API snapshot: %s", snapshot_path)
+    LOG.info("Saved level-5+ API metadata: %s", metadata_path)
+    LOG.info(
+        "Collection complete from endpoint plus warriors pages: players=%s, "
+        "retained previous level-5+=%.2f%% (%s/%s), groups=%s",
+        len(collection.heroes),
+        retained_ratio * 100,
+        retained_count,
+        len(previous_ids),
+        _group_coverage(collection.heroes),
+    )
+    return 0
 
 
 if __name__ == "__main__":

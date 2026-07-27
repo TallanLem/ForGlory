@@ -26,6 +26,7 @@ class EndpointGroupFieldsTests(unittest.TestCase):
             "crystals_looted": 13,
             "crystals_lost": 14,
             "beasts_killed": 15,
+            "achievements": {"lord_wins": 0},
         }
 
     def test_current_endpoint_nested_achievements_are_supported(self) -> None:

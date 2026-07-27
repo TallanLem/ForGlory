@@ -29,6 +29,7 @@ API_NUMERIC_FIELDS: tuple[tuple[str, str], ...] = (
     ("losses", "Поражений"),
     ("dragon_wins", "Побед над Драконом"),
     ("serpent_wins", "Побед над Змеем"),
+    ("lord_wins", "Побед над Владыкой"),
     ("strength", "Сила"),
     ("defense", "Защита"),
     ("agility", "Ловкость"),
@@ -41,9 +42,7 @@ API_NUMERIC_FIELDS: tuple[tuple[str, str], ...] = (
     ("beasts_killed", "Убито зверей"),
 )
 
-OPTIONAL_API_NUMERIC_FIELDS: tuple[tuple[str, str], ...] = (
-    ("lord_wins", "Побед над Владыкой"),
-)
+OPTIONAL_API_NUMERIC_FIELDS: tuple[tuple[str, str], ...] = ()
 
 API_VALUE_PARENTS = ("achievements", "stats", "statistics", "counters", "hero")
 
@@ -733,6 +732,216 @@ def replace_groups_from_rosters(
     )
 
 
+
+_LORD_WINS_JSON_PATTERNS = (
+    re.compile(r'["\']lord_wins["\']\s*[:=]\s*["\']?(\d[\d\s\xa0]*)', re.IGNORECASE),
+    re.compile(r'data-(?:achievement-)?(?:key|name|code)=["\']lord_wins["\'][^>]*?(?:data-value|data-count)=["\'](\d[\d\s\xa0]*)', re.IGNORECASE),
+    re.compile(r'(?:data-lord-wins|lord-wins)=["\'](\d[\d\s\xa0]*)', re.IGNORECASE),
+)
+
+
+def parse_lord_wins_from_achievements(html: str) -> int | None:
+    """Extract the absolute lord-win counter from an achievements page.
+
+    Current pages expose the machine field ``lord_wins`` in embedded state. The
+    visible-card fallbacks are deliberately conservative and are used only when
+    that machine field is absent.
+    """
+    if not html:
+        return None
+
+    for pattern in _LORD_WINS_JSON_PATTERNS:
+        match = pattern.search(html)
+        if match:
+            value = parse_int(match.group(1))
+            if value is not None:
+                return value
+
+    soup = BeautifulSoup(html, "html.parser")
+    selectors = (
+        '[data-achievement-key="lord_wins"]',
+        '[data-achievement-name="lord_wins"]',
+        '[data-achievement-code="lord_wins"]',
+        '[data-lord-wins]',
+        '[id*="lord_wins"]',
+    )
+    for selector in selectors:
+        for tag in soup.select(selector):
+            for attribute in ("data-value", "data-count", "data-lord-wins", "value"):
+                value = parse_int(tag.get(attribute))
+                if value is not None:
+                    return value
+            text_value = parse_int(tag.get_text(" ", strip=True))
+            if text_value is not None:
+                return text_value
+
+    cards = soup.select(
+        "div.flex.flex-col.p-2.leading-5, [data-achievement], "
+        ".achievement, [class*='achievement']"
+    )
+    for card in cards:
+        text = " ".join(card.get_text(" ", strip=True).split())
+        normalized = text.casefold()
+        if "владык" not in normalized and "lord" not in normalized:
+            continue
+
+        explicit_patterns = (
+            r'(?:побед\w*\s+над\s+владык\w*|lord[_\s-]*wins)\D{0,30}(\d[\d\s\xa0]*)',
+            r'(\d[\d\s\xa0]*)\s+(?:побед\w*\s+над\s+)?владык\w*',
+        )
+        for raw_pattern in explicit_patterns:
+            match = re.search(raw_pattern, text, re.IGNORECASE)
+            if match:
+                value = parse_int(match.group(1))
+                if value is not None:
+                    return value
+
+        progress = re.search(r'(\d[\d\s\xa0]*)\s+из\s+\d[\d\s\xa0]*', text, re.IGNORECASE)
+        if progress:
+            value = parse_int(progress.group(1))
+            if value is not None:
+                return value
+    return None
+
+
+def _previous_lord_wins(db_path: Path) -> dict[int, int]:
+    if not db_path.exists() or db_path.stat().st_size == 0:
+        return {}
+    conn = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+    try:
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(observations)")}
+        if "lord_wins" not in columns:
+            return {}
+        latest = conn.execute(
+            "SELECT snapshot_id FROM snapshots ORDER BY ts DESC LIMIT 1"
+        ).fetchone()
+        if latest is None:
+            return {}
+        return {
+            int(pid): int(value)
+            for pid, value in conn.execute(
+                "SELECT pid,lord_wins FROM observations "
+                "WHERE snapshot_id=? AND lord_wins IS NOT NULL",
+                (int(latest[0]),),
+            )
+        }
+    finally:
+        conn.close()
+
+
+def _fetch_one_lord_wins(
+    pid: int,
+    domain: str,
+    cookies: dict[str, str],
+    retries: int,
+    timeout_seconds: float,
+) -> tuple[int, int | None, str | None]:
+    url = f"{domain}achievements?player={pid}"
+    last_error = None
+    for attempt in range(1, max(1, retries) + 1):
+        try:
+            response = requests.get(
+                url,
+                cookies=cookies,
+                headers=legacy.HEADERS,
+                timeout=max(5.0, timeout_seconds),
+                allow_redirects=True,
+            )
+            if response.status_code == 200:
+                value = parse_lord_wins_from_achievements(response.text)
+                if value is not None:
+                    return pid, value, None
+                last_error = "lord_wins_not_found"
+            else:
+                last_error = f"http_{response.status_code}"
+        except requests.RequestException as exc:
+            last_error = type(exc).__name__
+        if attempt < max(1, retries):
+            time.sleep(min(5.0, 2 ** (attempt - 1)))
+    return pid, None, last_error
+
+
+def enrich_profile_fallback_lord_wins(
+    heroes: dict[int, dict],
+    *,
+    db_path: Path,
+    domain: str,
+    cookies: dict[str, str],
+    concurrency: int,
+    retries: int,
+) -> dict[str, Any]:
+    """Fill lord wins for profile fallback from individual achievement pages."""
+    missing = [
+        pid for pid, hero in heroes.items()
+        if parse_int(hero.get("Побед над Владыкой")) is None
+    ]
+    if not missing:
+        return {
+            "requested": 0,
+            "fetched": 0,
+            "reused_previous": 0,
+            "missing": 0,
+        }
+
+    previous = _previous_lord_wins(db_path)
+    fetched = 0
+    reused = 0
+    errors: dict[str, int] = {}
+    timeout_seconds = float(legacy.env_get("LORD_WINS_TIMEOUT_SECONDS", "30"))
+    worker_count = max(1, min(int(concurrency), 64))
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+        futures = [
+            pool.submit(
+                _fetch_one_lord_wins,
+                pid,
+                domain,
+                cookies,
+                max(1, retries),
+                timeout_seconds,
+            )
+            for pid in missing
+        ]
+        for index, future in enumerate(futures, 1):
+            pid, value, error = future.result()
+            if value is not None:
+                heroes[pid]["Побед над Владыкой"] = value
+                fetched += 1
+            elif pid in previous:
+                heroes[pid]["Побед над Владыкой"] = previous[pid]
+                reused += 1
+            else:
+                errors[error or "unknown"] = errors.get(error or "unknown", 0) + 1
+            if index % 1000 == 0 or index == len(futures):
+                LOG.info(
+                    "Lord-wins fallback progress %s/%s: fetched=%s, previous=%s, missing=%s",
+                    index,
+                    len(futures),
+                    fetched,
+                    reused,
+                    index - fetched - reused,
+                )
+
+    still_missing = sum(
+        1 for hero in heroes.values()
+        if parse_int(hero.get("Побед над Владыкой")) is None
+    )
+    minimum_ratio = float(legacy.env_get("LORD_WINS_MIN_COVERAGE", "0.995"))
+    coverage = (len(heroes) - still_missing) / len(heroes) if heroes else 1.0
+    if coverage < minimum_ratio:
+        raise ApiCollectionError(
+            "Profile fallback lord-wins coverage is too low: "
+            f"{coverage:.2%} < {minimum_ratio:.2%}; errors={errors}"
+        )
+    return {
+        "requested": len(missing),
+        "fetched": fetched,
+        "reused_previous": reused,
+        "missing": still_missing,
+        "coverage": coverage,
+        "errors": errors,
+    }
+
+
 def _save_legacy_fallback_snapshot(
     *,
     args: Any,
@@ -790,6 +999,14 @@ def _save_legacy_fallback_snapshot(
         for pid, hero in results.items()
         if (parse_int(hero.get("Уровень")) or 0) >= SCOPE_MIN_LEVEL
     }
+    lord_wins_meta = enrich_profile_fallback_lord_wins(
+        filtered,
+        db_path=db_path,
+        domain=domain,
+        cookies=cookies,
+        concurrency=args.concurrency,
+        retries=max(args.retries, args.achievement_retries),
+    )
 
     retained_count, retained_ratio = _coverage_ratio(set(filtered), previous_ids)
     if previous_ids and retained_ratio < args.min_success_ratio:
@@ -820,6 +1037,8 @@ def _save_legacy_fallback_snapshot(
             "retained_previous_level5_ratio": retained_ratio,
             "legacy_fallback_used": True,
             "fallback_recheck_window": recheck_window,
+            "lord_wins_source": "achievement_pages",
+            "lord_wins_collection": lord_wins_meta,
         }
     )
     metadata_path.write_text(

@@ -106,6 +106,8 @@ jobs:
           GROUP_SCAN_TIMEOUT_SECONDS: "30"
           GROUP_SCAN_MAX_ID: "5000"
           FALLBACK_RECHECK_WINDOW: "1000"
+          LORD_WINS_TIMEOUT_SECONDS: "30"
+          LORD_WINS_MIN_COVERAGE: "0.995"
         run: |
           python collect_api_first.py --db-path data/db/ratings.sqlite
 

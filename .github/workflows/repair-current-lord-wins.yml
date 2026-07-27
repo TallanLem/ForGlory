@@ -1,0 +1,174 @@
+name: Repair Current Lord Wins
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-current-lord-wins
+  cancel-in-progress: false
+
+jobs:
+  repair-publish-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore current database release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          python tools/fetch_db_from_release.py \
+            --out data/db/ratings.sqlite \
+            --attempts 5 \
+            --retry-delay 5
+
+      - name: Upgrade observation schema
+        run: |
+          python tools/ensure_observation_columns.py \
+            --db data/db/ratings.sqlite
+
+      - name: Repair lord wins in latest snapshot only
+        env:
+          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
+          HEROES_API_ATTEMPTS: "4"
+          HEROES_API_RETRY_DELAY_SECONDS: "5"
+          HEROES_API_TIMEOUT_SECONDS: "45"
+          HEROES_API_MIN_PLAYER_COUNT: "100"
+        run: |
+          python tools/repair_current_lord_wins.py \
+            --db data/db/ratings.sqlite \
+            --diagnostics data/lord_wins_repair_diagnostics.json
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lord-wins-repair-diagnostics-${{ github.run_id }}
+          path: data/lord_wins_repair_diagnostics.json
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Verify repaired database
+        id: repaired_db
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          import sqlite3
+          from pathlib import Path
+
+          path = Path("data/db/ratings.sqlite")
+          conn = sqlite3.connect(path)
+          try:
+              count = int(conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0])
+              row = conn.execute(
+                  "SELECT snapshot_id,filename FROM snapshots ORDER BY ts DESC LIMIT 1"
+              ).fetchone()
+              if not row:
+                  raise RuntimeError("Database contains no snapshots")
+              snapshot_id, latest = int(row[0]), str(row[1])
+              columns = {item[1] for item in conn.execute("PRAGMA table_info(observations)")}
+              if "lord_wins" not in columns:
+                  raise RuntimeError("observations.lord_wins is missing")
+              populated, positive = conn.execute(
+                  "SELECT SUM(lord_wins IS NOT NULL),SUM(lord_wins>0) "
+                  "FROM observations WHERE snapshot_id=?",
+                  (snapshot_id,),
+              ).fetchone()
+              if int(populated or 0) == 0 or int(positive or 0) == 0:
+                  raise RuntimeError(
+                      f"Latest snapshot still has no lord wins: populated={populated}, positive={positive}"
+                  )
+              check = conn.execute("PRAGMA quick_check").fetchone()[0]
+              if check != "ok":
+                  raise RuntimeError(f"SQLite quick_check failed: {check}")
+          finally:
+              conn.close()
+
+          sha = hashlib.sha256()
+          with path.open("rb") as handle:
+              for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                  sha.update(chunk)
+          digest = sha.hexdigest()
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"snapshot_count={count}\n")
+              output.write(f"latest_snapshot={latest}\n")
+              output.write(f"sha256={digest}\n")
+          print(
+              f"Repaired database verified: snapshots={count}, latest={latest}, "
+              f"populated={populated}, positive={positive}, sha256={digest}"
+          )
+          PY
+
+      - name: Compress database
+        run: |
+          python tools/compress_db.py \
+            --db data/db/ratings.sqlite \
+            --out data/db/ratings.sqlite.gz
+
+      - name: Back up repaired database
+        uses: actions/upload-artifact@v4
+        with:
+          name: lord-wins-database-backup-${{ github.run_id }}
+          path: |
+            data/db/ratings.sqlite.gz
+            data/lord_wins_repair_diagnostics.json
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Replace db-latest release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: db-latest
+          name: Database (latest)
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: data/db/ratings.sqlite.gz
+
+      - name: Verify published repaired database
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          rm -f data/db/published.sqlite
+          python tools/fetch_db_from_release.py \
+            --out data/db/published.sqlite \
+            --expect-latest-snapshot "${{ steps.repaired_db.outputs.latest_snapshot }}" \
+            --minimum-snapshot-count "${{ steps.repaired_db.outputs.snapshot_count }}" \
+            --expect-sha256 "${{ steps.repaired_db.outputs.sha256 }}" \
+            --attempts 6 \
+            --retry-delay 10
+
+      - name: Trigger Render
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL is not set; skipping Render deploy."
+            exit 0
+          fi
+          curl --fail --silent --show-error --retry 3 --retry-delay 5 \
+            -X GET "$RENDER_DEPLOY_HOOK_URL"

@@ -2,12 +2,112 @@
 
 from __future__ import annotations
 
+import importlib.abc
+import importlib.machinery
 import os
 import re
 import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+
+
+_LORD_WINS_PARAM = "Побед над Владыкой"
+_SERPENT_WINS_PARAM = "Побед над Змеем"
+
+
+def _insert_after(values: list[str], anchor: str, value: str) -> None:
+    if value in values:
+        return
+    try:
+        index = values.index(anchor) + 1
+    except ValueError:
+        values.append(value)
+    else:
+        values.insert(index, value)
+
+
+def _patch_app_parameter_lists(namespace: dict) -> bool:
+    options = namespace.get("param_options")
+    personal = namespace.get("PERSONAL_PARAMS")
+    if not isinstance(options, list) or not isinstance(personal, list):
+        return False
+    _insert_after(options, _SERPENT_WINS_PARAM, _LORD_WINS_PARAM)
+    _insert_after(personal, _SERPENT_WINS_PARAM, _LORD_WINS_PARAM)
+    return True
+
+
+class _AppParameterLoader(importlib.abc.Loader):
+    def __init__(self, original_loader) -> None:
+        self.original_loader = original_loader
+
+    def create_module(self, spec):
+        creator = getattr(self.original_loader, "create_module", None)
+        return creator(spec) if creator is not None else None
+
+    def exec_module(self, module) -> None:
+        self.original_loader.exec_module(module)
+        _patch_app_parameter_lists(module.__dict__)
+
+
+class _AppParameterFinder(importlib.abc.MetaPathFinder):
+    _forglory_app_parameter_finder = True
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname != "app":
+            return None
+        spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
+        if spec is None or spec.loader is None:
+            return spec
+        if not isinstance(spec.loader, _AppParameterLoader):
+            spec.loader = _AppParameterLoader(spec.loader)
+        return spec
+
+
+def _install_app_parameter_patch() -> None:
+    """Add the lord-wins rating to app.py without duplicating query logic.
+
+    The web module keeps its selector lists as literals. A small import wrapper
+    patches future ``import app`` calls after the module has finished loading.
+    When this package is first imported from inside app.py itself, a one-shot
+    trace handles the already-running import frame.
+    """
+    loaded_app = sys.modules.get("app")
+    if loaded_app is not None and _patch_app_parameter_lists(vars(loaded_app)):
+        return
+
+    if not any(
+        getattr(finder, "_forglory_app_parameter_finder", False)
+        for finder in sys.meta_path
+    ):
+        sys.meta_path.insert(0, _AppParameterFinder())
+
+    frame = sys._getframe()
+    app_frame = None
+    while frame is not None:
+        module_name = frame.f_globals.get("__name__")
+        module_file = str(frame.f_globals.get("__file__") or "").replace("\\", "/")
+        if module_name == "app" or (
+            module_name == "__main__" and module_file.endswith("/app.py")
+        ):
+            app_frame = frame
+            break
+        frame = frame.f_back
+    if app_frame is None:
+        return
+
+    previous_trace = sys.gettrace()
+
+    def trace(target, event, arg):
+        if target is app_frame and event == "line":
+            if _patch_app_parameter_lists(target.f_globals):
+                target.f_trace = None
+                sys.settrace(previous_trace)
+                return None
+        return trace
+
+    app_frame.f_trace = trace
+    sys.settrace(trace)
 
 
 _EMPTY_GROUP_NAMES = {"", "не состоит", "none", "null"}
@@ -247,3 +347,4 @@ def _install_balance_top10_query() -> None:
 
 _refresh_render_database()
 _install_balance_top10_query()
+_install_app_parameter_patch()

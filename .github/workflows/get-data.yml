@@ -87,7 +87,12 @@ jobs:
             --db data/db/ratings.sqlite \
             --optional
 
-      - name: Collect level 5+ players from endpoint
+      - name: Upgrade the restored observation schema
+        run: |
+          python tools/ensure_observation_columns.py \
+            --db data/db/ratings.sqlite
+
+      - name: Collect level 5+ players from endpoint with profile fallback
         env:
           COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
           DB_PATH: data/db/ratings.sqlite
@@ -96,6 +101,11 @@ jobs:
           HEROES_API_RETRY_DELAY_SECONDS: "5"
           HEROES_API_TIMEOUT_SECONDS: "45"
           HEROES_API_MIN_PLAYER_COUNT: "100"
+          GROUP_SCAN_ATTEMPTS: "3"
+          GROUP_SCAN_RETRY_DELAY_SECONDS: "2"
+          GROUP_SCAN_TIMEOUT_SECONDS: "30"
+          GROUP_SCAN_MAX_ID: "5000"
+          FALLBACK_RECHECK_WINDOW: "1000"
         run: |
           python collect_api_first.py --db-path data/db/ratings.sqlite
 
@@ -104,7 +114,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: failed-collection-${{ github.run_id }}
-          path: data/last_failed_collection.json
+          path: |
+            data/last_failed_collection.json
+            data/failed_html/
           retention-days: 7
           if-no-files-found: warn
 

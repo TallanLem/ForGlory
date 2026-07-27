@@ -28,6 +28,12 @@ class EndpointGroupFieldsTests(unittest.TestCase):
             "beasts_killed": 15,
         }
 
+    def test_current_endpoint_nested_achievements_are_supported(self) -> None:
+        row = self.base_row()
+        row["achievements"] = {"lord_wins": 321}
+        _, hero = normalise_api_hero(row, 1)
+        self.assertEqual(hero["Побед над Владыкой"], 321)
+
     def test_flat_snake_case_groups(self) -> None:
         row = self.base_row()
         row.update(

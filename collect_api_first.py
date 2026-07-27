@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -10,6 +12,7 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import requests
+from bs4 import BeautifulSoup
 
 import get_data as legacy
 from forglory.schema import parse_int
@@ -36,6 +39,12 @@ API_NUMERIC_FIELDS: tuple[tuple[str, str], ...] = (
     ("crystals_lost", "Потерял (кристаллы)"),
     ("beasts_killed", "Убито зверей"),
 )
+
+OPTIONAL_API_NUMERIC_FIELDS: tuple[tuple[str, str], ...] = (
+    ("lord_wins", "Побед над Владыкой"),
+)
+
+API_VALUE_PARENTS = ("achievements", "stats", "statistics", "counters", "hero")
 
 
 class ApiCollectionError(RuntimeError):
@@ -228,16 +237,7 @@ def _normalise_group_from_row(
     if not group_name and not group_id:
         return "не состоит", 0
     if group_id is None or group_id <= 0 or not group_name:
-        present_keys = sorted(
-            key
-            for scope in scopes
-            for key in scope
-            if key in set(aliases["containers"] + aliases["ids"] + aliases["names"])
-        )
-        raise ApiCollectionError(
-            f"API row {row_number}: incomplete {field} membership; "
-            f"name={group_name!r}, id={group_id!r}, present_keys={present_keys}"
-        )
+        return "не состоит", 0
     return group_name, group_id
 
 
@@ -265,6 +265,17 @@ def _endpoint_group_schema(rows: list[Any]) -> dict[str, Any]:
         "row_keys": sorted(all_keys),
     }
 
+def _api_numeric_value(raw: dict[str, Any], key: str) -> Any:
+    """Read a counter from the current or a future nested endpoint shape."""
+    if key in raw:
+        return raw.get(key)
+    for parent_key in API_VALUE_PARENTS:
+        parent = raw.get(parent_key)
+        if isinstance(parent, dict) and key in parent:
+            return parent.get(key)
+    return None
+
+
 def normalise_api_hero(raw: Any, row_number: int) -> tuple[int, dict]:
     if not isinstance(raw, dict):
         raise ApiCollectionError(f"API row {row_number}: expected an object")
@@ -284,7 +295,13 @@ def normalise_api_hero(raw: Any, row_number: int) -> tuple[int, dict]:
         "Чат": 0,
     }
     for api_key, snapshot_key in API_NUMERIC_FIELDS:
-        hero[snapshot_key] = _required_int(raw.get(api_key), api_key, row_number)
+        hero[snapshot_key] = _required_int(
+            _api_numeric_value(raw, api_key),
+            api_key,
+            row_number,
+        )
+    for api_key, snapshot_key in OPTIONAL_API_NUMERIC_FIELDS:
+        hero[snapshot_key] = parse_int(_api_numeric_value(raw, api_key))
 
     if hero["Уровень"] < SCOPE_MIN_LEVEL:
         raise ApiCollectionError(
@@ -341,22 +358,22 @@ def parse_api_payload(
             f"API returned only {len(rows)} players; minimum is {max(1, min_player_count)}"
         )
 
-    meta = payload.get("meta")
-    if not isinstance(meta, dict):
-        raise ApiCollectionError("API response field 'meta' must be an object")
-    meta = dict(meta)
+    raw_meta = payload.get("meta")
+    meta = dict(raw_meta) if isinstance(raw_meta, dict) else {}
 
     declared_min_level = parse_int(meta.get("min_level"))
-    if declared_min_level != SCOPE_MIN_LEVEL:
+    if declared_min_level is not None and declared_min_level != SCOPE_MIN_LEVEL:
         raise ApiCollectionError(
             f"API meta.min_level={declared_min_level!r}; expected {SCOPE_MIN_LEVEL}"
         )
 
     declared_count = parse_int(meta.get("count"))
-    if declared_count != len(rows):
+    if declared_count is not None and declared_count != len(rows):
         raise ApiCollectionError(
             f"API meta.count={declared_count!r}, but data contains {len(rows)} rows"
         )
+    meta.setdefault("min_level", SCOPE_MIN_LEVEL)
+    meta.setdefault("count", len(rows))
 
     heroes: dict[int, dict] = {}
     for row_number, raw in enumerate(rows, 1):
@@ -366,13 +383,8 @@ def parse_api_payload(
         heroes[pid] = hero
 
     group_coverage = _group_coverage(heroes)
-    if group_coverage["clan_members"] == 0 or group_coverage["brotherhood_members"] == 0:
-        schema = _endpoint_group_schema(rows)
-        raise ApiCollectionError(
-            "API response contains no usable clan or brotherhood memberships: "
-            f"coverage={group_coverage}; endpoint_schema={schema}"
-        )
     meta["forglory_group_coverage"] = group_coverage
+    meta["forglory_endpoint_schema"] = _endpoint_group_schema(rows)
     return heroes, meta
 
 
@@ -450,6 +462,359 @@ def fetch_from_bulk_api(
     raise ApiCollectionError(
         f"bulk heroes endpoint {endpoint} failed after {attempts} attempts: {last_error}"
     )
+
+
+
+@dataclass(frozen=True)
+class GroupRoster:
+    group_id: int
+    name: str
+    members: frozenset[int]
+
+
+def parse_group_roster_html(
+    html: str,
+    *,
+    group_kind: str,
+    group_id: int,
+) -> GroupRoster | None:
+    """Parse one clan/brotherhood warriors page.
+
+    A missing group is rendered by the game as a normal HTTP 200 error page with
+    "Что-то пошло не так". That page is the sequential scan terminator.
+    """
+    if group_kind not in {"clan", "brotherhood"}:
+        raise ValueError(f"Unsupported group kind: {group_kind}")
+
+    soup = BeautifulSoup(html or "", "html.parser")
+    prefix = "Воины клана " if group_kind == "clan" else "Воины братства "
+    header = next(
+        (
+            tag
+            for tag in soup.select("p.group-header")
+            if " ".join(tag.get_text(" ", strip=True).split()).startswith(prefix)
+        ),
+        None,
+    )
+    if header is None:
+        page_text = " ".join(soup.get_text(" ", strip=True).split())
+        if "Что-то пошло не так" in page_text:
+            return None
+        raise ApiCollectionError(
+            f"{group_kind} roster {group_id}: group header was not found"
+        )
+
+    header_text = " ".join(header.get_text(" ", strip=True).split())
+    name = header_text[len(prefix):].strip()
+    if not name:
+        raise ApiCollectionError(
+            f"{group_kind} roster {group_id}: group name is empty"
+        )
+
+    members: set[int] = set()
+    for link in soup.select('a[href*="hero/detail?player="]'):
+        match = re.search(r"(?:[?&])player=(\d+)", str(link.get("href") or ""))
+        if match:
+            members.add(int(match.group(1)))
+
+    return GroupRoster(group_id=group_id, name=name, members=frozenset(members))
+
+
+def scan_group_rosters(
+    domain: str,
+    cookies: dict[str, str],
+    group_kind: str,
+    *,
+    timeout_seconds: float,
+    attempts: int,
+    retry_delay_seconds: float,
+    maximum_id: int,
+) -> list[GroupRoster]:
+    """Scan group IDs from 1 until the first confirmed non-existent group."""
+    if group_kind not in {"clan", "brotherhood"}:
+        raise ValueError(f"Unsupported group kind: {group_kind}")
+
+    rosters: list[GroupRoster] = []
+    with requests.Session() as session:
+        session.headers.update(legacy.HEADERS)
+        session.headers.update({"Accept": "text/html", "Referer": domain})
+        session.cookies.update(cookies)
+
+        for group_id in range(1, max(1, maximum_id) + 1):
+            url = urljoin(domain, f"{group_kind}/warriors?id={group_id}")
+            last_error: Exception | None = None
+            for attempt in range(1, max(1, attempts) + 1):
+                try:
+                    response = session.get(
+                        url,
+                        timeout=max(1.0, timeout_seconds),
+                        allow_redirects=True,
+                    )
+                    if response.status_code in {404, 410}:
+                        roster = None
+                        break
+
+                    final = urlparse(response.url)
+                    if not final.path.rstrip("/").endswith(
+                        f"/{group_kind}/warriors"
+                    ):
+                        raise ApiCollectionError(
+                            f"{group_kind} roster {group_id}: "
+                            f"unexpected redirect to {response.url}"
+                        )
+
+                    roster = parse_group_roster_html(
+                        response.text,
+                        group_kind=group_kind,
+                        group_id=group_id,
+                    )
+                    if roster is None:
+                        # The game uses the same HTTP 200 error page for a missing
+                        # group and for some transient backend failures. Confirm it
+                        # on every configured attempt before ending the sequential
+                        # scan, otherwise one temporary page would hide all later IDs.
+                        if attempt < max(1, attempts):
+                            time.sleep(max(0.0, retry_delay_seconds) * attempt)
+                            continue
+                        break
+                    response.raise_for_status()
+                    break
+                except (requests.RequestException, ApiCollectionError) as exc:
+                    last_error = exc
+                    if attempt < max(1, attempts):
+                        time.sleep(max(0.0, retry_delay_seconds) * attempt)
+            else:
+                raise ApiCollectionError(
+                    f"{group_kind} roster {group_id} failed after {attempts} "
+                    f"attempts: {last_error}"
+                )
+
+            if roster is None:
+                LOG.info(
+                    "%s roster scan stopped at missing id=%s; valid groups=%s",
+                    group_kind,
+                    group_id,
+                    len(rosters),
+                )
+                return rosters
+
+            rosters.append(roster)
+            if group_id % 50 == 0:
+                LOG.info(
+                    "%s roster scan progress: ids=1..%s, groups=%s, members=%s",
+                    group_kind,
+                    group_id,
+                    len(rosters),
+                    sum(len(item.members) for item in rosters),
+                )
+
+    raise ApiCollectionError(
+        f"{group_kind} roster scan reached safety limit {maximum_id} "
+        "without finding a missing group id"
+    )
+
+
+def apply_group_rosters(
+    heroes: dict[int, dict],
+    group_kind: str,
+    rosters: list[GroupRoster],
+) -> dict[str, int]:
+    if group_kind == "clan":
+        name_key, id_key = "Клан", "clan_id"
+    elif group_kind == "brotherhood":
+        name_key, id_key = "Братство", "brotherhood_id"
+    else:
+        raise ValueError(f"Unsupported group kind: {group_kind}")
+
+    for hero in heroes.values():
+        hero[name_key] = "не состоит"
+        hero[id_key] = 0
+
+    assigned = 0
+    duplicate_members: set[int] = set()
+    seen_members: set[int] = set()
+    for roster in rosters:
+        for pid in roster.members:
+            if pid in seen_members:
+                duplicate_members.add(pid)
+                continue
+            seen_members.add(pid)
+            hero = heroes.get(pid)
+            if hero is None:
+                continue
+            hero[name_key] = roster.name
+            hero[id_key] = roster.group_id
+            assigned += 1
+
+    if duplicate_members:
+        raise ApiCollectionError(
+            f"{group_kind} roster scan assigned players to multiple groups: "
+            f"{sorted(duplicate_members)[:20]}"
+        )
+    return {
+        "groups": len(rosters),
+        "members_on_pages": len(seen_members),
+        "members_assigned": assigned,
+    }
+
+
+def enrich_groups_when_missing(
+    collection: ApiCollection,
+    domain: str,
+    cookies: dict[str, str],
+) -> None:
+    coverage = _group_coverage(collection.heroes)
+    missing_kinds: list[str] = []
+    if coverage["clan_members"] == 0:
+        missing_kinds.append("clan")
+    if coverage["brotherhood_members"] == 0:
+        missing_kinds.append("brotherhood")
+    if not missing_kinds:
+        LOG.info("Endpoint contains clan and brotherhood memberships; roster scan skipped")
+        return
+
+    LOG.warning(
+        "Endpoint group fields are missing or empty: coverage=%s, schema=%s. "
+        "Reconstructing memberships from warriors pages.",
+        coverage,
+        collection.meta.get("forglory_endpoint_schema"),
+    )
+    scan_meta: dict[str, Any] = {}
+    for group_kind in missing_kinds:
+        rosters = scan_group_rosters(
+            domain,
+            cookies,
+            group_kind,
+            timeout_seconds=float(
+                legacy.env_get("GROUP_SCAN_TIMEOUT_SECONDS", "30")
+            ),
+            attempts=int(legacy.env_get("GROUP_SCAN_ATTEMPTS", "3")),
+            retry_delay_seconds=float(
+                legacy.env_get("GROUP_SCAN_RETRY_DELAY_SECONDS", "2")
+            ),
+            maximum_id=int(legacy.env_get("GROUP_SCAN_MAX_ID", "5000")),
+        )
+        scan_meta[group_kind] = apply_group_rosters(
+            collection.heroes,
+            group_kind,
+            rosters,
+        )
+
+    coverage = _group_coverage(collection.heroes)
+    if coverage["clan_members"] == 0 or coverage["brotherhood_members"] == 0:
+        raise ApiCollectionError(
+            "Roster reconstruction produced no usable clan or brotherhood data: "
+            f"coverage={coverage}, scan={scan_meta}"
+        )
+    collection.meta["forglory_group_roster_scan"] = scan_meta
+    collection.meta["forglory_group_coverage"] = coverage
+    LOG.info("Roster reconstruction succeeded: coverage=%s, scan=%s", coverage, scan_meta)
+
+
+def _save_legacy_fallback_snapshot(
+    *,
+    args: Any,
+    db_path: Path,
+    cookies: dict[str, str],
+    domain: str,
+    reason: str,
+) -> tuple[Path, Path]:
+    """Run the profile collector while preserving the level-5+ dataset contract."""
+    if not legacy.check_site_ready(
+        domain,
+        cookies,
+        max_attempts=int(legacy.env_get("SITE_READY_ATTEMPTS", "5")),
+        delay_seconds=int(legacy.env_get("SITE_READY_DELAY_SECONDS", "60")),
+    ):
+        raise ApiCollectionError("Profile fallback site readiness check failed")
+
+    previous_ids, previous_snapshot = load_previous_level5_ids(db_path)
+    known_ids, _legacy_baseline, highest_probed = legacy.load_collection_scope(db_path)
+    known_names = legacy.load_known_names_from_db(db_path)
+
+    recheck_window = max(
+        0,
+        int(legacy.env_get("FALLBACK_RECHECK_WINDOW", "1000")),
+    )
+    probe_count = max(0, int(args.probe_count))
+    probe_start = max(1, highest_probed - recheck_window + 1)
+    probe_end = highest_probed + probe_count
+    ids = sorted(set(known_ids).union(range(probe_start, probe_end + 1)))
+
+    LOG.warning(
+        "Starting profile fallback: reason=%s, known_ids=%s, "
+        "recheck=%s..%s, new_probe_end=%s, requests=%s",
+        reason,
+        len(known_ids),
+        probe_start,
+        highest_probed,
+        probe_end,
+        len(ids),
+    )
+    results, failures, achievement_failures = asyncio.run(
+        legacy.collect(
+            ids,
+            cookies,
+            domain,
+            args.concurrency,
+            args.retries,
+            known_names=known_names,
+            achievement_retries=args.achievement_retries,
+            systemic_failure_sample_size=args.systemic_failure_sample_size,
+        )
+    )
+    filtered = {
+        pid: hero
+        for pid, hero in results.items()
+        if (parse_int(hero.get("Уровень")) or 0) >= SCOPE_MIN_LEVEL
+    }
+
+    retained_count, retained_ratio = _coverage_ratio(set(filtered), previous_ids)
+    if previous_ids and retained_ratio < args.min_success_ratio:
+        raise ApiCollectionError(
+            "Profile fallback rejected: retained previous level-5+ coverage "
+            f"{retained_ratio:.2%} is below {args.min_success_ratio:.2%} "
+            f"({retained_count}/{len(previous_ids)})"
+        )
+
+    snapshot_path, metadata_path = legacy.save_snapshot(
+        filtered,
+        failures=failures,
+        achievement_failures=achievement_failures,
+        baseline_ids=previous_ids,
+        known_ids=sorted(set(known_ids).union(filtered)),
+        probe_start=probe_start,
+        probe_end=probe_end,
+    )
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.update(
+        {
+            "collection_source": "profile_fallback",
+            "scope_min_level": SCOPE_MIN_LEVEL,
+            "fallback_reason": reason,
+            "previous_snapshot": previous_snapshot,
+            "previous_level5_count": len(previous_ids),
+            "retained_previous_level5_count": retained_count,
+            "retained_previous_level5_ratio": retained_ratio,
+            "legacy_fallback_used": True,
+            "fallback_recheck_window": recheck_window,
+        }
+    )
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    LOG.info(
+        "Profile fallback saved: players=%s, retained=%.2f%% (%s/%s), "
+        "profile_failures=%s, achievement_warnings=%s",
+        len(filtered),
+        retained_ratio * 100,
+        retained_count,
+        len(previous_ids),
+        len(failures),
+        len(achievement_failures),
+    )
+    return snapshot_path, metadata_path
 
 
 def _database_path(raw_path: str) -> Path:
@@ -573,6 +938,12 @@ def main() -> int:
 
     try:
         cookies, domain = load_cookie_config()
+    except ApiCollectionError as exc:
+        LOG.error("Cannot start collection: %s", exc)
+        write_failure_report(str(exc))
+        return 2
+
+    try:
         collection = fetch_from_bulk_api(
             domain,
             cookies,
@@ -583,50 +954,63 @@ def main() -> int:
             timeout_seconds=float(legacy.env_get("HEROES_API_TIMEOUT_SECONDS", "45")),
             min_player_count=int(legacy.env_get("HEROES_API_MIN_PLAYER_COUNT", "100")),
         )
+        enrich_groups_when_missing(collection, domain, cookies)
         previous_ids, previous_snapshot = load_previous_level5_ids(db_path)
-    except ApiCollectionError as exc:
-        LOG.error("Collection stopped: %s", exc)
-        write_failure_report(str(exc))
-        return 2
 
-    retained_count, retained_ratio = _coverage_ratio(
-        set(collection.heroes),
-        previous_ids,
-    )
-    if previous_ids and retained_ratio < args.min_success_ratio:
-        error = (
-            "API snapshot rejected: retained previous level-5+ coverage "
-            f"{retained_ratio:.2%} is below {args.min_success_ratio:.2%} "
-            f"({retained_count}/{len(previous_ids)})"
+        retained_count, retained_ratio = _coverage_ratio(
+            set(collection.heroes),
+            previous_ids,
         )
-        LOG.error(error)
-        write_failure_report(
-            error,
-            endpoint=collection.endpoint,
-            current_count=len(collection.heroes),
-            previous_count=len(previous_ids),
-            retained_count=retained_count,
-            retained_ratio=retained_ratio,
-        )
-        return 2
+        if previous_ids and retained_ratio < args.min_success_ratio:
+            raise ApiCollectionError(
+                "API snapshot rejected: retained previous level-5+ coverage "
+                f"{retained_ratio:.2%} is below {args.min_success_ratio:.2%} "
+                f"({retained_count}/{len(previous_ids)})"
+            )
 
-    snapshot_path, metadata_path = save_api_snapshot(
-        collection,
-        previous_ids,
-        previous_snapshot,
-        retained_count,
-        retained_ratio,
-    )
-    LOG.info("Saved level-5+ API snapshot: %s", snapshot_path)
-    LOG.info("Saved level-5+ API metadata: %s", metadata_path)
-    LOG.info(
-        "Collection complete: players=%s, retained previous level-5+=%.2f%% (%s/%s)",
-        len(collection.heroes),
-        retained_ratio * 100,
-        retained_count,
-        len(previous_ids),
-    )
-    return 0
+        snapshot_path, metadata_path = save_api_snapshot(
+            collection,
+            previous_ids,
+            previous_snapshot,
+            retained_count,
+            retained_ratio,
+        )
+        LOG.info("Saved level-5+ API snapshot: %s", snapshot_path)
+        LOG.info("Saved level-5+ API metadata: %s", metadata_path)
+        LOG.info(
+            "Collection complete from endpoint: players=%s, "
+            "retained previous level-5+=%.2f%% (%s/%s), groups=%s",
+            len(collection.heroes),
+            retained_ratio * 100,
+            retained_count,
+            len(previous_ids),
+            _group_coverage(collection.heroes),
+        )
+        return 0
+    except ApiCollectionError as endpoint_error:
+        LOG.exception(
+            "Endpoint-first collection failed; switching to profile fallback: %s",
+            endpoint_error,
+        )
+        try:
+            snapshot_path, metadata_path = _save_legacy_fallback_snapshot(
+                args=args,
+                db_path=db_path,
+                cookies=cookies,
+                domain=domain,
+                reason=str(endpoint_error),
+            )
+            LOG.info("Saved profile fallback snapshot: %s", snapshot_path)
+            LOG.info("Saved profile fallback metadata: %s", metadata_path)
+            return 0
+        except Exception as fallback_error:
+            error = (
+                f"Endpoint collection failed: {endpoint_error}; "
+                f"profile fallback failed: {fallback_error}"
+            )
+            LOG.exception(error)
+            write_failure_report(error, endpoint=api_endpoint(domain))
+            return 2
 
 
 if __name__ == "__main__":

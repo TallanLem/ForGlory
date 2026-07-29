@@ -9,7 +9,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -520,6 +520,54 @@ def parse_group_roster_html(
     return GroupRoster(group_id=group_id, name=name, members=frozenset(members))
 
 
+def load_known_group_ids(db_path: Path, group_kind: str) -> list[int]:
+    """Load group IDs from the most recent snapshot that still has memberships.
+
+    The latest snapshot may be the broken endpoint-only snapshot with zero group
+    fields. Looking for the newest snapshot with at least one positive ID keeps
+    the roster scan fast and preserves sparse/deleted historical identifiers.
+    """
+    if group_kind not in {"clan", "brotherhood"}:
+        raise ValueError(f"Unsupported group kind: {group_kind}")
+    if not db_path.exists() or db_path.stat().st_size == 0:
+        return []
+
+    column = "clan_game_id" if group_kind == "clan" else "brotherhood_game_id"
+    try:
+        conn = sqlite3.connect(f"file:{db_path.resolve().as_posix()}?mode=ro", uri=True)
+        try:
+            tables = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
+                )
+            }
+            if "observations" not in tables:
+                return []
+            row = conn.execute(
+                f"SELECT MAX(snapshot_id) FROM observations WHERE {column}>0"
+            ).fetchone()
+            snapshot_id = int(row[0]) if row and row[0] is not None else None
+            if snapshot_id is None:
+                return []
+            rows = conn.execute(
+                f"SELECT DISTINCT {column} FROM observations "
+                f"WHERE snapshot_id=? AND {column}>0 ORDER BY {column}",
+                (snapshot_id,),
+            ).fetchall()
+            return [int(item[0]) for item in rows if int(item[0]) > 0]
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        LOG.warning(
+            "Cannot load historical %s IDs from %s: %s",
+            group_kind,
+            db_path,
+            exc,
+        )
+        return []
+
+
 def scan_group_rosters(
     domain: str,
     cookies: dict[str, str],
@@ -529,30 +577,50 @@ def scan_group_rosters(
     attempts: int,
     retry_delay_seconds: float,
     maximum_id: int,
+    known_group_ids: Iterable[int] = (),
+    bootstrap_missing_limit: int = 250,
 ) -> list[GroupRoster]:
-    """Scan group IDs from 1 until the first confirmed non-existent group."""
+    """Refresh known sparse IDs, then discover new sequential group IDs.
+
+    Group numbering does not start at 1 (the supplied pages prove clan 6 and
+    brotherhood 100 exist while ID 1 does not). Therefore a missing leading ID
+    must never terminate the scan. Historical IDs are refreshed first; new IDs
+    are then scanned after the highest known ID until the first confirmed gap.
+    """
     if group_kind not in {"clan", "brotherhood"}:
         raise ValueError(f"Unsupported group kind: {group_kind}")
 
-    rosters: list[GroupRoster] = []
+    maximum_id = max(1, int(maximum_id))
+    attempts = max(1, int(attempts))
+    retry_delay_seconds = max(0.0, float(retry_delay_seconds))
+    timeout_seconds = max(1.0, float(timeout_seconds))
+    known_ids = sorted(
+        {
+            int(group_id)
+            for group_id in known_group_ids
+            if 0 < int(group_id) <= maximum_id
+        }
+    )
+    rosters_by_id: dict[int, GroupRoster] = {}
+
     with requests.Session() as session:
         session.headers.update(legacy.HEADERS)
         session.headers.update({"Accept": "text/html", "Referer": domain})
         session.cookies.update(cookies)
 
-        for group_id in range(1, max(1, maximum_id) + 1):
+        def fetch_one(group_id: int, configured_attempts: int) -> GroupRoster | None:
             url = urljoin(domain, f"{group_kind}/warriors?id={group_id}")
             last_error: Exception | None = None
-            for attempt in range(1, max(1, attempts) + 1):
+            for attempt in range(1, max(1, configured_attempts) + 1):
                 try:
                     response = session.get(
                         url,
-                        timeout=max(1.0, timeout_seconds),
+                        timeout=timeout_seconds,
                         allow_redirects=True,
                     )
                     if response.status_code in {404, 410}:
-                        roster = None
-                        break
+                        return None
+                    response.raise_for_status()
 
                     final = urlparse(response.url)
                     if not final.path.rstrip("/").endswith(
@@ -568,49 +636,117 @@ def scan_group_rosters(
                         group_kind=group_kind,
                         group_id=group_id,
                     )
-                    if roster is None:
-                        # The game uses the same HTTP 200 error page for a missing
-                        # group and for some transient backend failures. Confirm it
-                        # on every configured attempt before ending the sequential
-                        # scan, otherwise one temporary page would hide all later IDs.
-                        if attempt < max(1, attempts):
-                            time.sleep(max(0.0, retry_delay_seconds) * attempt)
-                            continue
-                        break
-                    response.raise_for_status()
-                    break
+                    if roster is not None:
+                        return roster
+                    # A 200 error page can also be a transient backend failure.
+                    # Confirm it on all requested attempts before treating it as
+                    # a genuinely missing group.
+                    if attempt < max(1, configured_attempts):
+                        time.sleep(retry_delay_seconds * attempt)
                 except (requests.RequestException, ApiCollectionError) as exc:
                     last_error = exc
-                    if attempt < max(1, attempts):
-                        time.sleep(max(0.0, retry_delay_seconds) * attempt)
-            else:
+                    if attempt < max(1, configured_attempts):
+                        time.sleep(retry_delay_seconds * attempt)
+                        continue
+                    raise ApiCollectionError(
+                        f"{group_kind} roster {group_id} failed after "
+                        f"{configured_attempts} attempts: {exc}"
+                    ) from exc
+            if last_error is not None:
                 raise ApiCollectionError(
-                    f"{group_kind} roster {group_id} failed after {attempts} "
-                    f"attempts: {last_error}"
+                    f"{group_kind} roster {group_id} failed: {last_error}"
+                )
+            return None
+
+        if known_ids:
+            LOG.info(
+                "%s roster scan: refreshing %s IDs from the last valid database snapshot; "
+                "range=%s..%s",
+                group_kind,
+                len(known_ids),
+                known_ids[0],
+                known_ids[-1],
+            )
+            for index, group_id in enumerate(known_ids, 1):
+                roster = fetch_one(group_id, attempts)
+                if roster is None:
+                    LOG.info(
+                        "%s historical roster id=%s no longer exists; skipping",
+                        group_kind,
+                        group_id,
+                    )
+                    continue
+                rosters_by_id[group_id] = roster
+                if index % 50 == 0:
+                    LOG.info(
+                        "%s roster refresh progress: checked=%s/%s, valid=%s, members=%s",
+                        group_kind,
+                        index,
+                        len(known_ids),
+                        len(rosters_by_id),
+                        sum(len(item.members) for item in rosters_by_id.values()),
+                    )
+            discovery_start = known_ids[-1] + 1
+        else:
+            # First-run/bootstrap path. Missing IDs before the first real group
+            # are expected. Probe each leading ID once for speed. If the whole
+            # probe range looks empty, repeat with full retries so one transient
+            # game error page cannot hide the first real group.
+            leading_limit = min(maximum_id, max(1, int(bootstrap_missing_limit)))
+            discovery_start = None
+            for probe_attempts in (1, attempts):
+                for group_id in range(1, leading_limit + 1):
+                    roster = fetch_one(group_id, probe_attempts)
+                    if roster is None:
+                        continue
+                    rosters_by_id[group_id] = roster
+                    discovery_start = group_id + 1
+                    LOG.info(
+                        "%s roster bootstrap found first valid id=%s after %s leading IDs",
+                        group_kind,
+                        group_id,
+                        group_id - 1,
+                    )
+                    break
+                if discovery_start is not None or attempts == 1:
+                    break
+                LOG.warning(
+                    "%s roster bootstrap quick probe found no groups in ids 1..%s; "
+                    "rechecking with %s attempts",
+                    group_kind,
+                    leading_limit,
+                    attempts,
+                )
+            if discovery_start is None:
+                raise ApiCollectionError(
+                    f"{group_kind} roster bootstrap found no valid group in ids "
+                    f"1..{leading_limit}; refusing to treat id=1 as the sequence end"
                 )
 
+        for group_id in range(discovery_start, maximum_id + 1):
+            roster = fetch_one(group_id, attempts)
             if roster is None:
                 LOG.info(
-                    "%s roster scan stopped at missing id=%s; valid groups=%s",
+                    "%s roster discovery stopped at missing id=%s; valid groups=%s, members=%s",
                     group_kind,
                     group_id,
-                    len(rosters),
+                    len(rosters_by_id),
+                    sum(len(item.members) for item in rosters_by_id.values()),
                 )
-                return rosters
-
-            rosters.append(roster)
+                return [rosters_by_id[key] for key in sorted(rosters_by_id)]
+            rosters_by_id[group_id] = roster
             if group_id % 50 == 0:
                 LOG.info(
-                    "%s roster scan progress: ids=1..%s, groups=%s, members=%s",
+                    "%s roster discovery progress: last_id=%s, groups=%s, members=%s",
                     group_kind,
                     group_id,
-                    len(rosters),
-                    sum(len(item.members) for item in rosters),
+                    len(rosters_by_id),
+                    sum(len(item.members) for item in rosters_by_id.values()),
                 )
 
     raise ApiCollectionError(
         f"{group_kind} roster scan reached safety limit {maximum_id} "
-        "without finding a missing group id"
+        "without finding the end of the group sequence"
     )
 
 
@@ -686,7 +822,20 @@ def replace_groups_from_rosters(
             legacy.env_get("GROUP_SCAN_RETRY_DELAY_SECONDS", "2")
         ),
         "maximum_id": int(legacy.env_get("GROUP_SCAN_MAX_ID", "5000")),
+        "bootstrap_missing_limit": int(
+            legacy.env_get("GROUP_SCAN_BOOTSTRAP_MISSING_LIMIT", "250")
+        ),
     }
+    db_path = Path(legacy.env_get("DB_PATH", "data/db/ratings.sqlite"))
+    known_ids_by_kind = {
+        group_kind: load_known_group_ids(db_path, group_kind)
+        for group_kind in ("clan", "brotherhood")
+    }
+    LOG.info(
+        "Historical group IDs loaded for roster refresh: clans=%s, brotherhoods=%s",
+        len(known_ids_by_kind["clan"]),
+        len(known_ids_by_kind["brotherhood"]),
+    )
 
     # Clan and brotherhood ID sequences are independent, so two low-volume
     # scans can run in parallel without turning this into a profile flood.
@@ -697,6 +846,7 @@ def replace_groups_from_rosters(
                 domain,
                 cookies,
                 group_kind,
+                known_group_ids=known_ids_by_kind[group_kind],
                 **scan_options,
             )
             for group_kind in ("clan", "brotherhood")

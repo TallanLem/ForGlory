@@ -70,7 +70,7 @@ class CollectionSourceRoutingTests(unittest.TestCase):
             roster_scan.assert_called_once()
             profile_fallback.assert_not_called()
 
-    def test_roster_failure_after_endpoint_success_does_not_use_profiles(self) -> None:
+    def test_roster_failure_after_endpoint_success_is_nonfatal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             args = self._args(Path(tmp) / "ratings.sqlite")
             collection = self._collection()
@@ -85,14 +85,27 @@ class CollectionSourceRoutingTests(unittest.TestCase):
                 "collect_api_first.replace_groups_from_rosters",
                 side_effect=ApiCollectionError("roster failed"),
             ), patch(
+                "collect_api_first.save_api_snapshot",
+                return_value=(Path("snapshot.json.gz"), Path("snapshot.meta.json")),
+            ) as save_snapshot, patch(
                 "collect_api_first.write_failure_report"
-            ), patch(
+            ) as failure_report, patch(
                 "collect_api_first._save_legacy_fallback_snapshot"
             ) as profile_fallback:
                 result = main()
 
-            self.assertEqual(result, 2)
+            self.assertEqual(result, 0)
+            save_snapshot.assert_called_once()
+            failure_report.assert_not_called()
             profile_fallback.assert_not_called()
+            self.assertEqual(
+                collection.meta["forglory_group_status"],
+                "failed_nonfatal",
+            )
+            self.assertEqual(
+                collection.meta["forglory_group_errors"],
+                {"unexpected": "roster failed"},
+            )
 
     def test_endpoint_failure_uses_profile_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -138,7 +151,10 @@ class CollectionSourceRoutingTests(unittest.TestCase):
             (hero["Братство"], hero["brotherhood_id"]),
             ("Roster brotherhood", 100),
         )
-        self.assertEqual(collection.meta["forglory_group_source"], "warriors_pages")
+        self.assertEqual(
+            collection.meta["forglory_group_source"],
+            "warriors_pages_best_effort",
+        )
 
 
 if __name__ == "__main__":

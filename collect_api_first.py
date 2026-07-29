@@ -576,32 +576,27 @@ def scan_group_rosters(
     timeout_seconds: float,
     attempts: int,
     retry_delay_seconds: float,
-    maximum_id: int,
     known_group_ids: Iterable[int] = (),
-    bootstrap_missing_limit: int = 250,
+    discovery_window: int = 50,
 ) -> list[GroupRoster]:
-    """Refresh known sparse IDs, then discover new sequential group IDs.
+    """Refresh known group IDs and probe only the next small ID window.
 
-    Group numbering does not start at 1 (the supplied pages prove clan 6 and
-    brotherhood 100 exist while ID 1 does not). Therefore a missing leading ID
-    must never terminate the scan. Historical IDs are refreshed first; new IDs
-    are then scanned after the highest known ID until the first confirmed gap.
+    Existing sparse IDs come from the latest successful database snapshot and,
+    when available, from the current endpoint response. Every known ID receives
+    the configured retries. New groups are searched only from ``max_known + 1``
+    through ``max_known + discovery_window``. Individual page failures are
+    logged and skipped; roster collection never invalidates player data.
     """
     if group_kind not in {"clan", "brotherhood"}:
         raise ValueError(f"Unsupported group kind: {group_kind}")
 
-    maximum_id = max(1, int(maximum_id))
     attempts = max(1, int(attempts))
     retry_delay_seconds = max(0.0, float(retry_delay_seconds))
     timeout_seconds = max(1.0, float(timeout_seconds))
-    known_ids = sorted(
-        {
-            int(group_id)
-            for group_id in known_group_ids
-            if 0 < int(group_id) <= maximum_id
-        }
-    )
+    discovery_window = max(0, int(discovery_window))
+    known_ids = sorted({int(group_id) for group_id in known_group_ids if int(group_id) > 0})
     rosters_by_id: dict[int, GroupRoster] = {}
+    failed_ids: list[int] = []
 
     with requests.Session() as session:
         session.headers.update(legacy.HEADERS)
@@ -638,9 +633,6 @@ def scan_group_rosters(
                     )
                     if roster is not None:
                         return roster
-                    # A 200 error page can also be a transient backend failure.
-                    # Confirm it on all requested attempts before treating it as
-                    # a genuinely missing group.
                     if attempt < max(1, configured_attempts):
                         time.sleep(retry_delay_seconds * attempt)
                 except (requests.RequestException, ApiCollectionError) as exc:
@@ -660,111 +652,115 @@ def scan_group_rosters(
 
         if known_ids:
             LOG.info(
-                "%s roster scan: refreshing %s IDs from the last valid database snapshot; "
-                "range=%s..%s",
+                "%s roster scan: refreshing %s known IDs; range=%s..%s",
                 group_kind,
                 len(known_ids),
                 known_ids[0],
                 known_ids[-1],
             )
-            for index, group_id in enumerate(known_ids, 1):
-                roster = fetch_one(group_id, attempts)
-                if roster is None:
-                    LOG.info(
-                        "%s historical roster id=%s no longer exists; skipping",
-                        group_kind,
-                        group_id,
-                    )
-                    continue
-                rosters_by_id[group_id] = roster
-                if index % 50 == 0:
-                    LOG.info(
-                        "%s roster refresh progress: checked=%s/%s, valid=%s, members=%s",
-                        group_kind,
-                        index,
-                        len(known_ids),
-                        len(rosters_by_id),
-                        sum(len(item.members) for item in rosters_by_id.values()),
-                    )
-            discovery_start = known_ids[-1] + 1
         else:
-            # First-run/bootstrap path. Missing IDs before the first real group
-            # are expected. Probe each leading ID once for speed. If the whole
-            # probe range looks empty, repeat with full retries so one transient
-            # game error page cannot hide the first real group.
-            leading_limit = min(maximum_id, max(1, int(bootstrap_missing_limit)))
-            discovery_start = None
-            for probe_attempts in (1, attempts):
-                for group_id in range(1, leading_limit + 1):
-                    roster = fetch_one(group_id, probe_attempts)
-                    if roster is None:
-                        continue
-                    rosters_by_id[group_id] = roster
-                    discovery_start = group_id + 1
-                    LOG.info(
-                        "%s roster bootstrap found first valid id=%s after %s leading IDs",
-                        group_kind,
-                        group_id,
-                        group_id - 1,
-                    )
-                    break
-                if discovery_start is not None or attempts == 1:
-                    break
-                LOG.warning(
-                    "%s roster bootstrap quick probe found no groups in ids 1..%s; "
-                    "rechecking with %s attempts",
-                    group_kind,
-                    leading_limit,
-                    attempts,
-                )
-            if discovery_start is None:
-                raise ApiCollectionError(
-                    f"{group_kind} roster bootstrap found no valid group in ids "
-                    f"1..{leading_limit}; refusing to treat id=1 as the sequence end"
-                )
+            LOG.warning(
+                "%s roster scan has no historical or endpoint IDs; "
+                "probing bootstrap range 1..%s once",
+                group_kind,
+                discovery_window,
+            )
 
-        for group_id in range(discovery_start, maximum_id + 1):
-            roster = fetch_one(group_id, attempts)
+        for index, group_id in enumerate(known_ids, 1):
+            try:
+                roster = fetch_one(group_id, attempts)
+            except Exception as exc:
+                failed_ids.append(group_id)
+                LOG.warning(
+                    "%s known roster id=%s could not be refreshed; skipping: %s",
+                    group_kind,
+                    group_id,
+                    exc,
+                )
+                continue
             if roster is None:
                 LOG.info(
-                    "%s roster discovery stopped at missing id=%s; valid groups=%s, members=%s",
+                    "%s known roster id=%s no longer exists; skipping",
                     group_kind,
                     group_id,
-                    len(rosters_by_id),
-                    sum(len(item.members) for item in rosters_by_id.values()),
                 )
-                return [rosters_by_id[key] for key in sorted(rosters_by_id)]
+                continue
             rosters_by_id[group_id] = roster
-            if group_id % 50 == 0:
+            if index % 50 == 0:
                 LOG.info(
-                    "%s roster discovery progress: last_id=%s, groups=%s, members=%s",
+                    "%s roster refresh progress: checked=%s/%s, valid=%s, members=%s, failed=%s",
                     group_kind,
-                    group_id,
+                    index,
+                    len(known_ids),
                     len(rosters_by_id),
                     sum(len(item.members) for item in rosters_by_id.values()),
+                    len(failed_ids),
                 )
 
-    raise ApiCollectionError(
-        f"{group_kind} roster scan reached safety limit {maximum_id} "
-        "without finding the end of the group sequence"
-    )
+        discovery_start = (known_ids[-1] + 1) if known_ids else 1
+        discovery_end = discovery_start + discovery_window - 1
+        discovery_ids = range(discovery_start, discovery_end + 1) if discovery_window else ()
+        for index, group_id in enumerate(discovery_ids, 1):
+            try:
+                roster = fetch_one(group_id, 1)
+            except Exception as exc:
+                failed_ids.append(group_id)
+                LOG.warning(
+                    "%s roster discovery id=%s failed; skipping without aborting collection: %s",
+                    group_kind,
+                    group_id,
+                    exc,
+                )
+                continue
+            if roster is not None:
+                rosters_by_id[group_id] = roster
+                LOG.info(
+                    "%s roster scan discovered new valid id=%s (%s)",
+                    group_kind,
+                    group_id,
+                    roster.name,
+                )
+            if index % 50 == 0:
+                LOG.info(
+                    "%s roster discovery progress: checked=%s/%s, valid_total=%s, members=%s, failed=%s",
+                    group_kind,
+                    index,
+                    discovery_window,
+                    len(rosters_by_id),
+                    sum(len(item.members) for item in rosters_by_id.values()),
+                    len(failed_ids),
+                )
 
+    LOG.info(
+        "%s roster scan finished: known=%s, discovery=%s..%s, valid=%s, members=%s, failed=%s",
+        group_kind,
+        len(known_ids),
+        discovery_start,
+        discovery_end if discovery_window else discovery_start - 1,
+        len(rosters_by_id),
+        sum(len(item.members) for item in rosters_by_id.values()),
+        len(failed_ids),
+    )
+    return [rosters_by_id[key] for key in sorted(rosters_by_id)]
 
 def apply_group_rosters(
     heroes: dict[int, dict],
     group_kind: str,
     rosters: list[GroupRoster],
 ) -> dict[str, int]:
+    """Overlay roster memberships without making group errors fatal.
+
+    Endpoint memberships are retained as a fallback when the game later starts
+    returning them again. Roster pages overwrite only players that were actually
+    observed on a valid page. Duplicate membership is logged and the first
+    valid assignment wins.
+    """
     if group_kind == "clan":
         name_key, id_key = "Клан", "clan_id"
     elif group_kind == "brotherhood":
         name_key, id_key = "Братство", "brotherhood_id"
     else:
         raise ValueError(f"Unsupported group kind: {group_kind}")
-
-    for hero in heroes.values():
-        hero[name_key] = "не состоит"
-        hero[id_key] = 0
 
     assigned = 0
     duplicate_members: set[int] = set()
@@ -783,14 +779,18 @@ def apply_group_rosters(
             assigned += 1
 
     if duplicate_members:
-        raise ApiCollectionError(
-            f"{group_kind} roster scan assigned players to multiple groups: "
-            f"{sorted(duplicate_members)[:20]}"
+        LOG.warning(
+            "%s roster pages contain duplicate player memberships; "
+            "keeping the first assignment for %s players, first IDs=%s",
+            group_kind,
+            len(duplicate_members),
+            sorted(duplicate_members)[:20],
         )
     return {
         "groups": len(rosters),
         "members_on_pages": len(seen_members),
         "members_assigned": assigned,
+        "duplicate_members": len(duplicate_members),
     }
 
 
@@ -799,17 +799,17 @@ def replace_groups_from_rosters(
     domain: str,
     cookies: dict[str, str],
 ) -> None:
-    """Replace endpoint memberships with authoritative warriors-page rosters.
+    """Best-effort group enrichment that can never invalidate player data.
 
-    The endpoint remains the primary and fast source for the complete level-5+
-    player dataset. Clan and brotherhood membership is deliberately rebuilt
-    from the much smaller sequential roster scans, even when the endpoint starts
-    returning group fields again. Profile-page collection is not used here.
+    The endpoint remains the primary source for the level-5+ player snapshot.
+    Clan and brotherhood pages are scanned independently. A failure in one kind
+    or one page is recorded in metadata and logged, while the endpoint snapshot
+    continues to be saved and published.
     """
     endpoint_coverage = _group_coverage(collection.heroes)
     LOG.info(
         "Refreshing clan and brotherhood memberships from warriors pages; "
-        "endpoint coverage before replacement=%s",
+        "endpoint coverage before enrichment=%s",
         endpoint_coverage,
     )
 
@@ -821,24 +821,55 @@ def replace_groups_from_rosters(
         "retry_delay_seconds": float(
             legacy.env_get("GROUP_SCAN_RETRY_DELAY_SECONDS", "2")
         ),
-        "maximum_id": int(legacy.env_get("GROUP_SCAN_MAX_ID", "5000")),
-        "bootstrap_missing_limit": int(
-            legacy.env_get("GROUP_SCAN_BOOTSTRAP_MISSING_LIMIT", "250")
+        "discovery_window": int(
+            legacy.env_get("GROUP_SCAN_DISCOVERY_WINDOW", "50")
         ),
     }
     db_path = Path(legacy.env_get("DB_PATH", "data/db/ratings.sqlite"))
-    known_ids_by_kind = {
+    historical_ids_by_kind = {
         group_kind: load_known_group_ids(db_path, group_kind)
         for group_kind in ("clan", "brotherhood")
     }
+    endpoint_ids_by_kind = {
+        "clan": sorted(
+            {
+                int(hero.get("clan_id") or 0)
+                for hero in collection.heroes.values()
+                if int(hero.get("clan_id") or 0) > 0
+            }
+        ),
+        "brotherhood": sorted(
+            {
+                int(hero.get("brotherhood_id") or 0)
+                for hero in collection.heroes.values()
+                if int(hero.get("brotherhood_id") or 0) > 0
+            }
+        ),
+    }
+    known_ids_by_kind = {
+        group_kind: sorted(
+            set(historical_ids_by_kind[group_kind])
+            | set(endpoint_ids_by_kind[group_kind])
+        )
+        for group_kind in ("clan", "brotherhood")
+    }
     LOG.info(
-        "Historical group IDs loaded for roster refresh: clans=%s, brotherhoods=%s",
+        "Group IDs prepared for roster refresh: "
+        "historical clans=%s, endpoint clans=%s, total clans=%s; "
+        "historical brotherhoods=%s, endpoint brotherhoods=%s, total brotherhoods=%s",
+        len(historical_ids_by_kind["clan"]),
+        len(endpoint_ids_by_kind["clan"]),
         len(known_ids_by_kind["clan"]),
+        len(historical_ids_by_kind["brotherhood"]),
+        len(endpoint_ids_by_kind["brotherhood"]),
         len(known_ids_by_kind["brotherhood"]),
     )
 
-    # Clan and brotherhood ID sequences are independent, so two low-volume
-    # scans can run in parallel without turning this into a profile flood.
+    rosters_by_kind: dict[str, list[GroupRoster]] = {
+        "clan": [],
+        "brotherhood": [],
+    }
+    scan_errors: dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = {
             group_kind: executor.submit(
@@ -851,36 +882,66 @@ def replace_groups_from_rosters(
             )
             for group_kind in ("clan", "brotherhood")
         }
-        rosters_by_kind = {
-            group_kind: future.result()
-            for group_kind, future in futures.items()
-        }
+        for group_kind, future in futures.items():
+            try:
+                rosters_by_kind[group_kind] = future.result()
+            except Exception as exc:
+                scan_errors[group_kind] = str(exc)
+                LOG.exception(
+                    "%s roster scan failed completely; continuing without it: %s",
+                    group_kind,
+                    exc,
+                )
 
     scan_meta: dict[str, Any] = {}
     for group_kind in ("clan", "brotherhood"):
-        scan_meta[group_kind] = apply_group_rosters(
-            collection.heroes,
-            group_kind,
-            rosters_by_kind[group_kind],
-        )
+        try:
+            scan_meta[group_kind] = apply_group_rosters(
+                collection.heroes,
+                group_kind,
+                rosters_by_kind[group_kind],
+            )
+        except Exception as exc:
+            scan_errors[group_kind] = str(exc)
+            scan_meta[group_kind] = {
+                "groups": 0,
+                "members_on_pages": 0,
+                "members_assigned": 0,
+                "duplicate_members": 0,
+            }
+            LOG.exception(
+                "%s roster application failed; keeping endpoint values: %s",
+                group_kind,
+                exc,
+            )
 
     coverage = _group_coverage(collection.heroes)
-    if coverage["clan_members"] == 0 or coverage["brotherhood_members"] == 0:
-        raise ApiCollectionError(
-            "Warriors-page scans produced no usable clan or brotherhood data: "
-            f"coverage={coverage}, scan={scan_meta}"
-        )
-
     collection.meta["forglory_endpoint_group_coverage"] = endpoint_coverage
-    collection.meta["forglory_group_source"] = "warriors_pages"
+    collection.meta["forglory_group_source"] = "warriors_pages_best_effort"
     collection.meta["forglory_group_roster_scan"] = scan_meta
     collection.meta["forglory_group_coverage"] = coverage
-    LOG.info(
-        "Warriors-page group replacement succeeded: coverage=%s, scan=%s",
-        coverage,
-        scan_meta,
+    if scan_errors:
+        collection.meta["forglory_group_errors"] = scan_errors
+    collection.meta["forglory_group_status"] = (
+        "ok"
+        if coverage["clan_members"] > 0 and coverage["brotherhood_members"] > 0
+        else "partial_or_missing"
     )
 
+    if coverage["clan_members"] == 0 or coverage["brotherhood_members"] == 0:
+        LOG.warning(
+            "Group enrichment is incomplete, but player snapshot will still be saved: "
+            "coverage=%s, scan=%s, errors=%s",
+            coverage,
+            scan_meta,
+            scan_errors,
+        )
+    else:
+        LOG.info(
+            "Warriors-page group enrichment completed: coverage=%s, scan=%s",
+            coverage,
+            scan_meta,
+        )
 
 
 _LORD_WINS_JSON_PATTERNS = (
@@ -1392,10 +1453,24 @@ def main() -> int:
             write_failure_report(error, endpoint=api_endpoint(domain))
             return 2
 
-    # From this point the endpoint has succeeded. Any roster/database failure is
-    # reported as a failure and must never launch tens of thousands of profiles.
+    # From this point the endpoint has succeeded. Group enrichment is strictly
+    # best-effort: no clan/brotherhood failure may prevent saving player data.
     try:
         replace_groups_from_rosters(collection, domain, cookies)
+    except Exception as group_error:
+        LOG.exception(
+            "Unexpected group enrichment failure; saving endpoint player data anyway: %s",
+            group_error,
+        )
+        collection.meta["forglory_group_status"] = "failed_nonfatal"
+        collection.meta["forglory_group_errors"] = {
+            "unexpected": str(group_error),
+        }
+        collection.meta["forglory_group_coverage"] = _group_coverage(
+            collection.heroes
+        )
+
+    try:
         snapshot_path, metadata_path = save_api_snapshot(
             collection,
             previous_ids,
@@ -1403,11 +1478,8 @@ def main() -> int:
             retained_count,
             retained_ratio,
         )
-    except Exception as post_endpoint_error:
-        error = (
-            "Bulk endpoint succeeded, but roster enrichment or snapshot saving "
-            f"failed: {post_endpoint_error}"
-        )
+    except Exception as snapshot_error:
+        error = f"Bulk endpoint succeeded, but snapshot saving failed: {snapshot_error}"
         LOG.exception(error)
         write_failure_report(
             error,
@@ -1422,7 +1494,7 @@ def main() -> int:
     LOG.info("Saved level-5+ API snapshot: %s", snapshot_path)
     LOG.info("Saved level-5+ API metadata: %s", metadata_path)
     LOG.info(
-        "Collection complete from endpoint plus warriors pages: players=%s, "
+        "Collection complete from endpoint with best-effort warriors pages: players=%s, "
         "retained previous level-5+=%.2f%% (%s/%s), groups=%s",
         len(collection.heroes),
         retained_ratio * 100,

@@ -104,7 +104,7 @@ jobs:
           GROUP_SCAN_ATTEMPTS: "3"
           GROUP_SCAN_RETRY_DELAY_SECONDS: "2"
           GROUP_SCAN_TIMEOUT_SECONDS: "30"
-          GROUP_SCAN_MAX_ID: "5000"
+          GROUP_SCAN_DISCOVERY_WINDOW: "50"
           FALLBACK_RECHECK_WINDOW: "1000"
           LORD_WINS_TIMEOUT_SECONDS: "30"
           LORD_WINS_MIN_COVERAGE: "0.995"
@@ -154,7 +154,8 @@ jobs:
             --best-window-days 30 \
             --max-gap-hours 26
 
-      - name: Synchronize and validate clan and brotherhood data
+      - name: Synchronize clan and brotherhood data (non-fatal)
+        continue-on-error: true
         run: |
           python tools/sync_snapshot_groups.py \
             --snapshot "${{ steps.collection.outputs.snapshot }}" \

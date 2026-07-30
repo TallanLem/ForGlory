@@ -1,0 +1,167 @@
+name: Remove Latest Snapshot
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type DELETE LATEST SNAPSHOT"
+        required: true
+        type: string
+      expected_latest:
+        description: "Optional exact latest filename; rollback stops if it does not match"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: get-player-data-main
+  cancel-in-progress: false
+
+jobs:
+  rollback-latest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Validate confirmation
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "DELETE LATEST SNAPSHOT" ]; then
+            echo "Confirmation must be exactly: DELETE LATEST SNAPSHOT" >&2
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download the published database
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          python tools/fetch_db_from_release.py \
+            --out data/db/ratings.sqlite \
+            --require-schema-version 3 \
+            --attempts 3 \
+            --retry-delay 10
+
+      - name: Create a pre-rollback backup
+        run: |
+          python tools/compress_db.py \
+            --db data/db/ratings.sqlite \
+            --out data/db/ratings.before-remove.sqlite.gz
+
+      - name: Upload the pre-rollback backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-before-remove-${{ github.run_id }}
+          path: data/db/ratings.before-remove.sqlite.gz
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Remove exactly the latest snapshot
+        id: rollback
+        env:
+          EXPECTED_LATEST: ${{ inputs.expected_latest }}
+        shell: bash
+        run: |
+          args=(
+            --db data/db/ratings.sqlite
+            --best-window-days 30
+            --max-gap-hours 26
+            --vacuum
+            --github-output "$GITHUB_OUTPUT"
+          )
+          if [ -n "$EXPECTED_LATEST" ]; then
+            args+=(--expect-filename "$EXPECTED_LATEST")
+          fi
+          python tools/remove_latest_snapshot.py "${args[@]}"
+
+      - name: Calculate corrected database hash
+        id: corrected
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          path = Path("data/db/ratings.sqlite")
+          digest = hashlib.sha256()
+          with path.open("rb") as handle:
+              for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                  digest.update(chunk)
+          value = digest.hexdigest()
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"sha256={value}\n")
+          print(f"Corrected database sha256={value}")
+          PY
+
+      - name: Compress the corrected database
+        run: |
+          python tools/compress_db.py \
+            --db data/db/ratings.sqlite \
+            --out data/db/ratings.sqlite.gz
+
+      - name: Upload the corrected database backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: database-after-remove-${{ github.run_id }}
+          path: data/db/ratings.sqlite.gz
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish the corrected database in GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: db-latest
+          name: Database (latest)
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: data/db/ratings.sqlite.gz
+
+      - name: Verify the published rollback
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          rm -f data/db/published.sqlite
+          python tools/fetch_db_from_release.py \
+            --out data/db/published.sqlite \
+            --expect-latest-snapshot "${{ steps.rollback.outputs.new_latest_snapshot }}" \
+            --minimum-snapshot-count "${{ steps.rollback.outputs.snapshot_count }}" \
+            --expect-sha256 "${{ steps.corrected.outputs.sha256 }}" \
+            --attempts 6 \
+            --retry-delay 10
+
+      - name: Write rollback summary
+        run: |
+          {
+            echo "## Latest snapshot removed"
+            echo
+            echo "- Removed: \`${{ steps.rollback.outputs.removed_snapshot }}\`"
+            echo "- New latest: \`${{ steps.rollback.outputs.new_latest_snapshot }}\`"
+            echo "- Remaining snapshots: ${{ steps.rollback.outputs.snapshot_count }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Trigger Render only after the corrected release is ready
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL is not set; skipping Render deploy."
+            exit 0
+          fi
+          curl --fail --silent --show-error --retry 3 --retry-delay 5 \
+            -X GET "$RENDER_DEPLOY_HOOK_URL"

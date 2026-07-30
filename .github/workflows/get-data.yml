@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "24 17 * * *"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Run even if a snapshot exists within the 5-hour duplicate window"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -13,7 +19,71 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  duplicate-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      should_run: ${{ steps.window.outputs.should_run }}
+      reason: ${{ steps.window.outputs.reason }}
+      latest_snapshot: ${{ steps.window.outputs.latest_snapshot }}
+      delta_seconds: ${{ steps.window.outputs.delta_seconds }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore the published database for duplicate detection
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          python tools/fetch_db_from_release.py \
+            --optional \
+            --out data/db/ratings.sqlite
+
+      - name: Check the five-hour snapshot window
+        id: window
+        env:
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.force == true }}
+        shell: bash
+        run: |
+          args=(
+            --db data/db/ratings.sqlite
+            --window-hours 5
+            --github-output "$GITHUB_OUTPUT"
+          )
+          if [ "$FORCE_RUN" = "true" ]; then
+            args+=(--force)
+          fi
+          python tools/check_snapshot_window.py "${args[@]}"
+
+      - name: Explain duplicate skip
+        if: steps.window.outputs.should_run != 'true'
+        run: |
+          echo "Collection skipped: a published snapshot is already inside the ±5 hour window."
+          echo "Latest snapshot: ${{ steps.window.outputs.latest_snapshot }}"
+          echo "Distance in seconds: ${{ steps.window.outputs.delta_seconds }}"
+          {
+            echo "## Collection skipped"
+            echo
+            echo "A published snapshot already exists within the ±5 hour duplicate window."
+            echo
+            echo "- Latest snapshot: \`${{ steps.window.outputs.latest_snapshot }}\`"
+            echo "- Distance: ${{ steps.window.outputs.delta_seconds }} seconds"
+            echo "- Use manual input \`force=true\` only for an intentional second collection."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   collect-build-deploy:
+    needs: duplicate-guard
+    if: needs.duplicate-guard.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
 

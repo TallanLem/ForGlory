@@ -28,54 +28,327 @@ def _insert_after(values: list[str], anchor: str, value: str) -> None:
         values.insert(index, value)
 
 
+def _sql_literal(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def _patch_personal_stats_query(namespace: dict) -> bool:
+    """Replace the N+1 personal-rating query with four batched SQL reads."""
     query = namespace.get("query_personal_stats")
     get_db = namespace.get("get_db")
     if not callable(query) or not callable(get_db):
         return False
-    if getattr(query, "_forglory_best_rank", False):
+    if getattr(query, "_forglory_personal_optimized", False):
         return True
 
-    @wraps(query)
-    def query_with_best_rank(pid: int, snap_from: str, snap_to: str):
-        result = query(pid, snap_from, snap_to)
-        if not result:
+    snapshot_info = namespace.get("snapshot_info")
+    row_value = namespace.get("_row_value")
+    player_value_expr = namespace.get("_player_value_expr")
+    personal_params = namespace.get("PERSONAL_PARAMS")
+    cached_query = namespace.get("cached_query")
+
+    optimized_ready = (
+        callable(snapshot_info)
+        and callable(row_value)
+        and callable(player_value_expr)
+        and isinstance(personal_params, list)
+        and bool(personal_params)
+    )
+
+    # Keep the former best-rank-only patch as a compatibility fallback for
+    # partial test/import namespaces. Production app.py always takes the
+    # optimized branch below.
+    if not optimized_ready:
+        if getattr(query, "_forglory_best_rank", False):
+            return True
+
+        @wraps(query)
+        def query_with_best_rank(pid: int, snap_from: str, snap_to: str):
+            result = query(pid, snap_from, snap_to)
+            if not result:
+                return result
+
+            latest = get_db().execute(
+                "SELECT snapshot_id FROM snapshots ORDER BY ts DESC LIMIT 1"
+            ).fetchone()
+            ranks: dict[str, int] = {}
+            if latest is not None:
+                ranked_rows = get_db().execute(
+                    """
+                    WITH ranked AS (
+                        SELECT param,pid,
+                               ROW_NUMBER() OVER(
+                                   PARTITION BY param
+                                   ORDER BY diff DESC,pid ASC
+                               ) AS rank
+                        FROM best_growth
+                        WHERE best_for_snapshot_id=?
+                    )
+                    SELECT param,rank
+                    FROM ranked
+                    WHERE pid=?
+                    """,
+                    (int(latest[0]), int(pid)),
+                ).fetchall()
+                ranks = {str(row["param"]): int(row["rank"]) for row in ranked_rows}
+
+            for row in result.get("rows", []):
+                row["best_rank"] = (
+                    ranks.get(str(row.get("param")))
+                    if row.get("best_diff") is not None
+                    else None
+                )
             return result
 
-        latest = get_db().execute(
-            "SELECT snapshot_id FROM snapshots ORDER BY ts DESC LIMIT 1"
-        ).fetchone()
-        ranks: dict[str, int] = {}
-        if latest is not None:
-            ranked_rows = get_db().execute(
-                """
-                WITH ranked AS (
-                    SELECT param,pid,
-                           ROW_NUMBER() OVER(
-                               PARTITION BY param
-                               ORDER BY diff DESC,pid ASC
-                           ) AS rank
-                    FROM best_growth
-                    WHERE best_for_snapshot_id=?
-                )
-                SELECT param,rank
-                FROM ranked
-                WHERE pid=?
-                """,
-                (int(latest[0]), int(pid)),
-            ).fetchall()
-            ranks = {str(row["param"]): int(row["rank"]) for row in ranked_rows}
+        query_with_best_rank._forglory_best_rank = True
+        namespace["query_personal_stats"] = query_with_best_rank
+        return True
 
-        for row in result.get("rows", []):
-            row["best_rank"] = (
-                ranks.get(str(row.get("param")))
-                if row.get("best_diff") is not None
+    params = [str(param) for param in personal_params]
+    values_sql = ",".join(f"({_sql_literal(param)})" for param in params)
+
+    def value_case(alias: str) -> str:
+        clauses = " ".join(
+            f"WHEN {_sql_literal(param)} THEN {player_value_expr(param, alias)}"
+            for param in params
+        )
+        return f"CASE pv.param {clauses} END"
+
+    overall_value = value_case("o")
+    growth_clauses = " ".join(
+        f"WHEN {_sql_literal(param)} THEN "
+        f"({player_value_expr(param, 'c')}-{player_value_expr(param, 'p')})"
+        for param in params
+    )
+    growth_value = f"CASE pv.param {growth_clauses} END"
+
+    @wraps(query)
+    def query_optimized(pid: int, snap_from: str, snap_to: str):
+        from_info = snapshot_info(snap_from)
+        to_info = snapshot_info(snap_to)
+        if not from_info or not to_info:
+            return None
+
+        from_sid, from_ts = from_info
+        to_sid, to_ts = to_info
+        if from_ts > to_ts:
+            from_sid, to_sid = to_sid, from_sid
+            snap_from, snap_to = snap_to, snap_from
+
+        db = get_db()
+        observation_rows = db.execute(
+            """
+            SELECT o.*,n.value AS _player_name
+            FROM observations o
+            LEFT JOIN text_values n ON n.text_id=o.name_id
+            WHERE o.pid=? AND o.snapshot_id IN (?,?)
+            """,
+            (int(pid), int(from_sid), int(to_sid)),
+        ).fetchall()
+        observations = {
+            int(row["snapshot_id"]): row for row in observation_rows
+        }
+        start = observations.get(int(from_sid))
+        end = observations.get(int(to_sid))
+        if start is None or end is None:
+            return None
+
+        overall_rows = db.execute(
+            f"""
+            WITH param_values(param) AS (VALUES {values_sql}),
+            values_by_param AS (
+                SELECT pv.param,o.pid,{overall_value} AS value
+                FROM observations o
+                CROSS JOIN param_values pv
+                WHERE o.snapshot_id=?
+            ),
+            ranked AS (
+                SELECT param,pid,
+                       ROW_NUMBER() OVER(
+                           PARTITION BY param
+                           ORDER BY value DESC,pid ASC
+                       ) AS rank
+                FROM values_by_param
+                WHERE value IS NOT NULL
+            )
+            SELECT param,rank FROM ranked WHERE pid=?
+            """,
+            (int(to_sid), int(pid)),
+        ).fetchall()
+        overall_ranks = {
+            str(row["param"]): int(row["rank"]) for row in overall_rows
+        }
+
+        growth_rows = db.execute(
+            f"""
+            WITH param_values(param) AS (VALUES {values_sql}),
+            values_by_param AS (
+                SELECT pv.param,c.pid,{growth_value} AS value
+                FROM observations c
+                JOIN observations p
+                  ON p.snapshot_id=? AND p.pid=c.pid
+                CROSS JOIN param_values pv
+                WHERE c.snapshot_id=?
+            ),
+            ranked AS (
+                SELECT param,pid,
+                       ROW_NUMBER() OVER(
+                           PARTITION BY param
+                           ORDER BY value DESC,pid ASC
+                       ) AS rank
+                FROM values_by_param
+                WHERE value IS NOT NULL
+            )
+            SELECT param,rank FROM ranked WHERE pid=?
+            """,
+            (int(from_sid), int(to_sid), int(pid)),
+        ).fetchall()
+        growth_ranks = {
+            str(row["param"]): int(row["rank"]) for row in growth_rows
+        }
+
+        best_rows = db.execute(
+            """
+            WITH latest AS (
+                SELECT snapshot_id
+                FROM snapshots
+                ORDER BY ts DESC
+                LIMIT 1
+            ),
+            ranked AS (
+                SELECT bg.param,bg.pid,bg.diff,bg.best_snapshot_id,
+                       ROW_NUMBER() OVER(
+                           PARTITION BY bg.param
+                           ORDER BY bg.diff DESC,bg.pid ASC
+                       ) AS rank
+                FROM best_growth bg
+                WHERE bg.best_for_snapshot_id=(SELECT snapshot_id FROM latest)
+            )
+            SELECT r.param,r.diff,s.filename AS best_snapshot,r.rank AS best_rank
+            FROM ranked r
+            JOIN snapshots s ON s.snapshot_id=r.best_snapshot_id
+            WHERE r.pid=?
+            """,
+            (int(pid),),
+        ).fetchall()
+        best_by_param = {str(row["param"]): dict(row) for row in best_rows}
+
+        rows_out = []
+        for param in params:
+            start_value = row_value(start, param)
+            end_value = row_value(end, param)
+            delta = (
+                end_value - start_value
+                if start_value is not None and end_value is not None
                 else None
             )
-        return result
+            best = best_by_param.get(param)
+            rows_out.append(
+                {
+                    "param": param,
+                    "start": start_value,
+                    "end": end_value,
+                    "delta": delta,
+                    "growth_rank": (
+                        growth_ranks.get(param) if delta is not None else None
+                    ),
+                    "overall_rank": (
+                        overall_ranks.get(param) if end_value is not None else None
+                    ),
+                    "best_diff": int(best["diff"]) if best else None,
+                    "best_snapshot": best["best_snapshot"] if best else None,
+                    "best_rank": int(best["best_rank"]) if best else None,
+                }
+            )
 
-    query_with_best_rank._forglory_best_rank = True
-    namespace["query_personal_stats"] = query_with_best_rank
+        return {
+            "pid": int(pid),
+            "name": end["_player_name"] or str(pid),
+            "level": int(end["level"]) if end["level"] is not None else None,
+            "file1": snap_from,
+            "file2": snap_to,
+            "rows": rows_out,
+        }
+
+    patched_query = (
+        cached_query(query_optimized) if callable(cached_query) else query_optimized
+    )
+    patched_query._forglory_personal_optimized = True
+    patched_query._forglory_best_rank = True
+    namespace["query_personal_stats"] = patched_query
+    return True
+
+
+def _patch_player_suggestion_route(namespace: dict) -> bool:
+    """Return at most three current players with their current levels."""
+    flask_app = namespace.get("app")
+    get_db = namespace.get("get_db")
+    normalize_name = namespace.get("normalize_name")
+    db_available = namespace.get("_db_available")
+    request = namespace.get("request")
+    jsonify = namespace.get("jsonify")
+    if not all(
+        callable(value)
+        for value in (get_db, normalize_name, db_available, jsonify)
+    ) or flask_app is None or request is None:
+        return False
+
+    current = getattr(flask_app, "view_functions", {}).get("api_player_suggest_all")
+    if not callable(current):
+        return False
+    if getattr(current, "_forglory_compact_suggestions", False):
+        return True
+
+    @wraps(current)
+    def compact_player_suggestions():
+        if not db_available():
+            return jsonify([])
+        query_text = normalize_name(request.args.get("q") or "")
+        if len(query_text) < 2:
+            return jsonify([])
+
+        rows = get_db().execute(
+            """
+            WITH latest AS (
+                SELECT snapshot_id
+                FROM snapshots
+                ORDER BY ts DESC
+                LIMIT 1
+            ),
+            matches AS (
+                SELECT n.value AS name,n.norm AS name_norm,o.level,o.pid,
+                       ROW_NUMBER() OVER(
+                           PARTITION BY n.norm
+                           ORDER BY o.pid ASC
+                       ) AS same_name_rank
+                FROM observations o
+                JOIN latest l ON l.snapshot_id=o.snapshot_id
+                JOIN text_values n ON n.text_id=o.name_id
+                WHERE n.norm LIKE ?
+            )
+            SELECT name,name_norm,level,pid
+            FROM matches
+            WHERE same_name_rank=1
+            ORDER BY CASE WHEN name_norm=? THEN 0 ELSE 1 END,name,pid
+            LIMIT 3
+            """,
+            (f"%{query_text}%", query_text),
+        ).fetchall()
+        return jsonify(
+            [
+                {
+                    "name": str(row["name"]),
+                    "level": (
+                        int(row["level"]) if row["level"] is not None else None
+                    ),
+                }
+                for row in rows
+            ]
+        )
+
+    compact_player_suggestions._forglory_compact_suggestions = True
+    flask_app.view_functions["api_player_suggest_all"] = compact_player_suggestions
+    namespace["api_player_suggest_all"] = compact_player_suggestions
     return True
 
 
@@ -88,7 +361,8 @@ def _patch_app_parameter_lists(namespace: dict) -> bool:
         _insert_after(personal, _SERPENT_WINS_PARAM, _LORD_WINS_PARAM)
 
     personal_query_ready = _patch_personal_stats_query(namespace)
-    return lists_ready and personal_query_ready
+    suggestions_ready = _patch_player_suggestion_route(namespace)
+    return lists_ready and personal_query_ready and suggestions_ready
 
 
 class _AppParameterLoader(importlib.abc.Loader):
@@ -119,12 +393,12 @@ class _AppParameterFinder(importlib.abc.MetaPathFinder):
 
 
 def _install_app_parameter_patch() -> None:
-    """Patch app.py selectors and personal best-growth ranks at import time.
+    """Patch app.py selectors, personal queries, and profile suggestions.
 
     The web module keeps its selector lists and personal-stat query in app.py.
     A small import wrapper patches future ``import app`` calls after the module
     has finished loading. When this package is first imported from inside app.py
-    itself, a one-shot trace waits until both targets have been defined.
+    itself, a one-shot trace waits until all targets have been defined.
     """
     loaded_app = sys.modules.get("app")
     if loaded_app is not None and _patch_app_parameter_lists(vars(loaded_app)):

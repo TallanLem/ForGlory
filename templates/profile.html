@@ -44,12 +44,14 @@
             id="profile-nickname"
             value="{{ nickname }}"
             placeholder="Ник или ID игрока"
-            list="profile-nicknames"
             autocomplete="off"
             required
+            aria-autocomplete="list"
+            aria-controls="profile-suggestions"
+            aria-expanded="false"
             data-resolved-name="{{ player.name if player else '' }}"
           >
-          <datalist id="profile-nicknames"></datalist>
+          <div id="profile-suggestions" class="profile-suggestions" role="listbox" hidden></div>
         </div>
 
         <div class="profile-date-row">
@@ -98,12 +100,6 @@
         </div>
 
         <div class="personal-table-shell">
-          <button
-            type="button"
-            class="table-scroll-hint table-scroll-hint-left"
-            aria-label="Прокрутить таблицу влево"
-            title="Ещё данные слева"
-          >‹</button>
           <div class="personal-table-wrap" id="personal-table-wrap">
           <table class="personal-stats-table">
             <thead>
@@ -142,12 +138,22 @@
             </tbody>
           </table>
           </div>
-          <button
-            type="button"
-            class="table-scroll-hint table-scroll-hint-right"
-            aria-label="Прокрутить таблицу вправо"
-            title="Ещё данные справа"
-          >›</button>
+          <div class="table-scroll-controls" id="personal-table-controls" hidden>
+            <button
+              type="button"
+              class="table-scroll-button"
+              id="personal-scroll-left"
+              aria-label="Прокрутить таблицу влево"
+              title="Ещё данные слева"
+            >‹</button>
+            <button
+              type="button"
+              class="table-scroll-button"
+              id="personal-scroll-right"
+              aria-label="Прокрутить таблицу вправо"
+              title="Ещё данные справа"
+            >›</button>
+          </div>
         </div>
       </section>
     {% endif %}
@@ -182,16 +188,84 @@
       });
 
       const input = document.getElementById("profile-nickname");
-      const datalist = document.getElementById("profile-nicknames");
+      const suggestions = document.getElementById("profile-suggestions");
       const date1 = document.getElementById("profile-file1");
       const date2 = document.getElementById("profile-file2");
       const resolved = (input?.dataset.resolvedName || "").trim().toLocaleLowerCase("ru-RU");
       let timer = null;
+      let activeSuggestion = -1;
+
+      function closeSuggestions() {
+        if (!suggestions || !input) return;
+        suggestions.hidden = true;
+        suggestions.replaceChildren();
+        input.setAttribute("aria-expanded", "false");
+        input.removeAttribute("aria-activedescendant");
+        activeSuggestion = -1;
+      }
+
+      function selectSuggestion(button) {
+        if (!input || !button) return;
+        input.value = button.dataset.name || "";
+        closeSuggestions();
+        input.focus();
+      }
+
+      function setActiveSuggestion(index) {
+        if (!suggestions || !input) return;
+        const buttons = [...suggestions.querySelectorAll(".profile-suggestion")];
+        if (!buttons.length) return;
+        activeSuggestion = Math.max(0, Math.min(index, buttons.length - 1));
+        buttons.forEach((button, buttonIndex) => {
+          const active = buttonIndex === activeSuggestion;
+          button.classList.toggle("is-active", active);
+          button.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        input.setAttribute("aria-activedescendant", buttons[activeSuggestion].id);
+      }
+
+      function renderSuggestions(items) {
+        if (!suggestions || !input) return;
+        suggestions.replaceChildren();
+        activeSuggestion = -1;
+        items.slice(0, 3).forEach((item, index) => {
+          const name = typeof item === "string" ? item : String(item.name || "");
+          if (!name) return;
+          const level = typeof item === "object" && item.level != null ? String(item.level) : "";
+          const button = document.createElement("button");
+          button.type = "button";
+          button.id = `profile-suggestion-${index}`;
+          button.className = "profile-suggestion";
+          button.setAttribute("role", "option");
+          button.setAttribute("aria-selected", "false");
+          button.dataset.name = name;
+
+          const namePart = document.createElement("span");
+          namePart.className = "profile-suggestion-name";
+          namePart.textContent = name;
+          button.appendChild(namePart);
+
+          if (level) {
+            const levelPart = document.createElement("span");
+            levelPart.className = "profile-suggestion-level";
+            levelPart.textContent = `[${level}]`;
+            button.appendChild(levelPart);
+          }
+
+          button.addEventListener("mousedown", (event) => event.preventDefault());
+          button.addEventListener("click", () => selectSuggestion(button));
+          suggestions.appendChild(button);
+        });
+
+        const hasItems = suggestions.childElementCount > 0;
+        suggestions.hidden = !hasItems;
+        input.setAttribute("aria-expanded", hasItems ? "true" : "false");
+      }
 
       input?.addEventListener("input", () => {
         clearTimeout(timer);
+        closeSuggestions();
         const value = input.value.trim();
-        datalist.innerHTML = "";
 
         if (resolved && value.toLocaleLowerCase("ru-RU") !== resolved) {
           if (date1) date1.disabled = true;
@@ -202,39 +276,60 @@
         timer = setTimeout(async () => {
           try {
             const response = await fetch(`/api/player_suggest_all?q=${encodeURIComponent(value)}`);
-            const names = await response.json();
-            names.forEach((name) => {
-              const option = document.createElement("option");
-              option.value = name;
-              datalist.appendChild(option);
-            });
+            if (!response.ok) throw new Error(`Suggestion request failed: ${response.status}`);
+            renderSuggestions(await response.json());
           } catch (error) {
+            closeSuggestions();
             console.error(error);
           }
-        }, 180);
+        }, 150);
+      });
+
+      input?.addEventListener("keydown", (event) => {
+        if (!suggestions || suggestions.hidden) return;
+        const buttons = [...suggestions.querySelectorAll(".profile-suggestion")];
+        if (!buttons.length) return;
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          setActiveSuggestion(activeSuggestion < 0 ? 0 : activeSuggestion + 1);
+        } else if (event.key === "ArrowUp") {
+          event.preventDefault();
+          setActiveSuggestion(activeSuggestion < 0 ? buttons.length - 1 : activeSuggestion - 1);
+        } else if (event.key === "Enter" && activeSuggestion >= 0) {
+          event.preventDefault();
+          selectSuggestion(buttons[activeSuggestion]);
+        } else if (event.key === "Escape") {
+          closeSuggestions();
+        }
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!event.target.closest?.(".profile-search-row")) closeSuggestions();
       });
 
       const tableWrap = document.getElementById("personal-table-wrap");
-      const leftHint = document.querySelector(".table-scroll-hint-left");
-      const rightHint = document.querySelector(".table-scroll-hint-right");
+      const tableControls = document.getElementById("personal-table-controls");
+      const leftButton = document.getElementById("personal-scroll-left");
+      const rightButton = document.getElementById("personal-scroll-right");
 
-      function updateTableScrollHints() {
-        if (!tableWrap) return;
+      function updateTableScrollControls() {
+        if (!tableWrap || !tableControls) return;
         const maxScroll = Math.max(0, tableWrap.scrollWidth - tableWrap.clientWidth);
         const hasOverflow = maxScroll > 2;
-        leftHint?.classList.toggle("is-visible", hasOverflow && tableWrap.scrollLeft > 2);
-        rightHint?.classList.toggle("is-visible", hasOverflow && tableWrap.scrollLeft < maxScroll - 2);
+        tableControls.hidden = !hasOverflow;
+        if (leftButton) leftButton.disabled = !hasOverflow || tableWrap.scrollLeft <= 2;
+        if (rightButton) rightButton.disabled = !hasOverflow || tableWrap.scrollLeft >= maxScroll - 2;
       }
 
-      leftHint?.addEventListener("click", () => {
+      leftButton?.addEventListener("click", () => {
         tableWrap?.scrollBy({left: -Math.max(180, tableWrap.clientWidth * 0.7), behavior: "smooth"});
       });
-      rightHint?.addEventListener("click", () => {
+      rightButton?.addEventListener("click", () => {
         tableWrap?.scrollBy({left: Math.max(180, tableWrap.clientWidth * 0.7), behavior: "smooth"});
       });
-      tableWrap?.addEventListener("scroll", updateTableScrollHints, {passive: true});
-      window.addEventListener("resize", updateTableScrollHints);
-      requestAnimationFrame(updateTableScrollHints);
+      tableWrap?.addEventListener("scroll", updateTableScrollControls, {passive: true});
+      window.addEventListener("resize", updateTableScrollControls);
+      requestAnimationFrame(updateTableScrollControls);
 
       document.addEventListener("click", (event) => {
         const link = event.target.closest?.("a");

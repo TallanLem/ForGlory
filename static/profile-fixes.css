@@ -40,3 +40,104 @@
     padding-left: 0;
   }
 }
+
+/* Compact, fully styleable profile-name suggestions. */
+.profile-search-row {
+  position: relative;
+  z-index: 20;
+}
+
+.profile-suggestions {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  overflow: hidden;
+  max-width: 560px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-color);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.18);
+}
+
+.profile-suggestions[hidden] {
+  display: none;
+}
+
+.profile-suggestion {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 7px;
+  border: 0;
+  border-bottom: 1px solid var(--border-color);
+  border-radius: 0;
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.76em;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+
+.profile-suggestion:last-child {
+  border-bottom: 0;
+}
+
+.profile-suggestion:hover,
+.profile-suggestion.is-active {
+  background: var(--header-color);
+}
+
+.profile-suggestion-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-suggestion-level {
+  flex: 0 0 auto;
+  color: var(--muted-color);
+  font-size: 0.9em;
+}
+
+/* Horizontal table controls stay below the table and never cover values. */
+.table-scroll-controls {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 7px;
+}
+
+.table-scroll-controls[hidden] {
+  display: none;
+}
+
+.table-scroll-button {
+  display: inline-flex;
+  width: 38px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-color);
+  color: var(--link-color);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.table-scroll-button:hover:not(:disabled) {
+  background: var(--header-color);
+}
+
+.table-scroll-button:disabled {
+  opacity: 0.3;
+}

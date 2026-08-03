@@ -9,6 +9,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+from functools import wraps
 from pathlib import Path
 
 
@@ -27,14 +28,67 @@ def _insert_after(values: list[str], anchor: str, value: str) -> None:
         values.insert(index, value)
 
 
+def _patch_personal_stats_query(namespace: dict) -> bool:
+    query = namespace.get("query_personal_stats")
+    get_db = namespace.get("get_db")
+    if not callable(query) or not callable(get_db):
+        return False
+    if getattr(query, "_forglory_best_rank", False):
+        return True
+
+    @wraps(query)
+    def query_with_best_rank(pid: int, snap_from: str, snap_to: str):
+        result = query(pid, snap_from, snap_to)
+        if not result:
+            return result
+
+        latest = get_db().execute(
+            "SELECT snapshot_id FROM snapshots ORDER BY ts DESC LIMIT 1"
+        ).fetchone()
+        ranks: dict[str, int] = {}
+        if latest is not None:
+            ranked_rows = get_db().execute(
+                """
+                WITH ranked AS (
+                    SELECT param,pid,
+                           ROW_NUMBER() OVER(
+                               PARTITION BY param
+                               ORDER BY diff DESC,pid ASC
+                           ) AS rank
+                    FROM best_growth
+                    WHERE best_for_snapshot_id=?
+                )
+                SELECT param,rank
+                FROM ranked
+                WHERE pid=?
+                """,
+                (int(latest[0]), int(pid)),
+            ).fetchall()
+            ranks = {str(row["param"]): int(row["rank"]) for row in ranked_rows}
+
+        for row in result.get("rows", []):
+            row["best_rank"] = (
+                ranks.get(str(row.get("param")))
+                if row.get("best_diff") is not None
+                else None
+            )
+        return result
+
+    query_with_best_rank._forglory_best_rank = True
+    namespace["query_personal_stats"] = query_with_best_rank
+    return True
+
+
 def _patch_app_parameter_lists(namespace: dict) -> bool:
     options = namespace.get("param_options")
     personal = namespace.get("PERSONAL_PARAMS")
-    if not isinstance(options, list) or not isinstance(personal, list):
-        return False
-    _insert_after(options, _SERPENT_WINS_PARAM, _LORD_WINS_PARAM)
-    _insert_after(personal, _SERPENT_WINS_PARAM, _LORD_WINS_PARAM)
-    return True
+    lists_ready = isinstance(options, list) and isinstance(personal, list)
+    if lists_ready:
+        _insert_after(options, _SERPENT_WINS_PARAM, _LORD_WINS_PARAM)
+        _insert_after(personal, _SERPENT_WINS_PARAM, _LORD_WINS_PARAM)
+
+    personal_query_ready = _patch_personal_stats_query(namespace)
+    return lists_ready and personal_query_ready
 
 
 class _AppParameterLoader(importlib.abc.Loader):
@@ -65,12 +119,12 @@ class _AppParameterFinder(importlib.abc.MetaPathFinder):
 
 
 def _install_app_parameter_patch() -> None:
-    """Add the lord-wins rating to app.py without duplicating query logic.
+    """Patch app.py selectors and personal best-growth ranks at import time.
 
-    The web module keeps its selector lists as literals. A small import wrapper
-    patches future ``import app`` calls after the module has finished loading.
-    When this package is first imported from inside app.py itself, a one-shot
-    trace handles the already-running import frame.
+    The web module keeps its selector lists and personal-stat query in app.py.
+    A small import wrapper patches future ``import app`` calls after the module
+    has finished loading. When this package is first imported from inside app.py
+    itself, a one-shot trace waits until both targets have been defined.
     """
     loaded_app = sys.modules.get("app")
     if loaded_app is not None and _patch_app_parameter_lists(vars(loaded_app)):

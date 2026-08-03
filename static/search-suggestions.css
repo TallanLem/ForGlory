@@ -1,0 +1,84 @@
+/* Shared compact player suggestions for profile and all rating modes. */
+.player-search-box {
+  position: relative;
+  z-index: 20;
+}
+
+.rating-search-box {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 520px;
+}
+
+.rating-search-box .search-input {
+  width: 100%;
+  max-width: none;
+}
+
+.player-suggestions {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-color);
+  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.18);
+}
+
+.player-suggestions[hidden] {
+  display: none;
+}
+
+.player-suggestion {
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0;
+  padding: 4px 7px;
+  border: 0;
+  border-bottom: 1px solid var(--border-color);
+  border-radius: 0;
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-size: 0.76em;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+}
+
+.player-suggestion:last-child {
+  border-bottom: 0;
+}
+
+.player-suggestion:hover,
+.player-suggestion.is-active {
+  background: var(--header-color);
+}
+
+.player-suggestion-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-suggestion-level {
+  flex: 0 0 auto;
+  margin-left: 0.35em;
+  color: var(--muted-color);
+  font-size: 1em;
+  white-space: nowrap;
+}
+
+@media (min-width: 700px) {
+  .rating-search-box {
+    width: clamp(240px, 32vw, 520px);
+    flex: 0 0 auto;
+  }
+}

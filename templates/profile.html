@@ -7,6 +7,7 @@
   <link rel="icon" href="{{ url_for('static', filename='icons/favicon.png') }}" type="image/x-icon">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='profile-fixes.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='search-suggestions.css') }}">
   <script>
     if (localStorage.getItem("theme") === "dark") {
       document.documentElement.classList.add("dark");
@@ -37,7 +38,7 @@
 
     <section class="profile-panel">
       <form method="GET" id="profile-form" class="profile-form" onsubmit="showLoading('Сбор данных...')">
-        <div class="profile-search-row">
+        <div class="profile-search-row player-search-box">
           <input
             type="text"
             name="nickname"
@@ -51,7 +52,7 @@
             aria-expanded="false"
             data-resolved-name="{{ player.name if player else '' }}"
           >
-          <div id="profile-suggestions" class="profile-suggestions" role="listbox" hidden></div>
+          <div id="profile-suggestions" class="profile-suggestions player-suggestions" role="listbox" hidden></div>
         </div>
 
         <div class="profile-date-row">
@@ -228,26 +229,26 @@
         if (!suggestions || !input) return;
         suggestions.replaceChildren();
         activeSuggestion = -1;
-        items.slice(0, 3).forEach((item, index) => {
+        items.slice(0, 5).forEach((item, index) => {
           const name = typeof item === "string" ? item : String(item.name || "");
           if (!name) return;
           const level = typeof item === "object" && item.level != null ? String(item.level) : "";
           const button = document.createElement("button");
           button.type = "button";
           button.id = `profile-suggestion-${index}`;
-          button.className = "profile-suggestion";
+          button.className = "profile-suggestion player-suggestion";
           button.setAttribute("role", "option");
           button.setAttribute("aria-selected", "false");
           button.dataset.name = name;
 
           const namePart = document.createElement("span");
-          namePart.className = "profile-suggestion-name";
+          namePart.className = "profile-suggestion-name player-suggestion-name";
           namePart.textContent = name;
           button.appendChild(namePart);
 
           if (level) {
             const levelPart = document.createElement("span");
-            levelPart.className = "profile-suggestion-level";
+            levelPart.className = "profile-suggestion-level player-suggestion-level";
             levelPart.textContent = `[${level}]`;
             button.appendChild(levelPart);
           }

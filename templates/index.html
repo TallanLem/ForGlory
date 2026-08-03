@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='responsive-details.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='layout-fixes.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='search-suggestions.css') }}">
   <script>
     if (localStorage.getItem("theme") === "dark") {
       document.documentElement.classList.add("dark");
@@ -114,18 +115,30 @@
         </div>
 
         <div class="controls-row row-inline">
-          <select name="param" onchange="submitWithLoading(this.form)">
+          <select name="param" onchange="submitParameterChange(this)">
             {% for p in param_selectable %}
               <option value="{{ p }}" {% if p == param %}selected{% endif %}>{{ p }}</option>
             {% endfor %}
           </select>
         </div>
 
-        {% if not (param == 'По уровню' or param.startswith('Братства') or param.startswith('Кланы')) %}
+        {% if param == 'По уровню' or param.startswith('Братства') or param.startswith('Кланы') %}
+          <input type="hidden" name="level" value="Все">
+        {% else %}
           <div class="filter-row search-row">
-            <input type="text" id="scroll-nick" list="nicknames" placeholder="Поиск по нику"
-                   class="search-input" autocomplete="off" onkeydown="handleSearchEnter(event)">
-            <datalist id="nicknames"></datalist>
+            <div class="rating-search-box player-search-box">
+              <input
+                type="text"
+                id="scroll-nick"
+                placeholder="Поиск по нику"
+                class="search-input"
+                autocomplete="off"
+                aria-autocomplete="list"
+                aria-controls="rating-suggestions"
+                aria-expanded="false"
+              >
+              <div id="rating-suggestions" class="rating-suggestions player-suggestions" role="listbox" hidden></div>
+            </div>
             <button type="button" onclick="searchByNickname()" class="search-btn" aria-label="Найти игрока">🔍</button>
           </div>
 
@@ -184,7 +197,8 @@
         {% endif %}
       {% endfor %}
       <div class="total-line">
-        <span class="value-with-delta">{{ level5.count }}{% if level5.delta %}<sup class="{{ 'positive' if level5.delta > 0 else 'negative' }}">{{ format_delta(level5.delta) }}</sup>{% endif %}</span>
+        {{ level5.count }}
+        {% if level5.delta %}<sup class="{{ 'positive' if level5.delta > 0 else 'negative' }}">{{ format_delta(level5.delta) }}</sup>{% endif %}
         игроков 5+ уровня
       </div>
       <div class="level-list">
@@ -272,7 +286,11 @@
                   <td class="wide-name">
                     <a href="https://playwekings.mobi/hero/detail?player={{ row[0] }}" target="_blank" rel="noopener"><span class="name-ellipsis">{{ row[1] }}</span><sup class="player-level">{{ row[2] }}</sup></a>
                   </td>
-                  <td><span class="value-with-delta">{{ format_int(row[3]) }}{% if mode == 'Общий' and row[4] is not none and row[4] != 0 %}<sup class="{{ 'positive' if row[4] > 0 else 'negative' }}">{{ format_delta(row[4]) }}</sup>{% endif %}{% if mode != 'Общий' and row[4] is not none %}<sup class="muted">{{ row[4] }} ⚔</sup>{% endif %}</span></td>
+                  <td>
+                    {{ format_int(row[3]) }}
+                    {% if mode == 'Общий' and row[4] is not none and row[4] != 0 %}<sup class="{{ 'positive' if row[4] > 0 else 'negative' }}">{{ format_delta(row[4]) }}</sup>{% endif %}
+                    {% if mode != 'Общий' and row[4] is not none %}<sup class="muted">{{ row[4] }} ⚔</sup>{% endif %}
+                  </td>
                 </tr>
               {% endfor %}
             {% endif %}
@@ -296,6 +314,21 @@
       const overlay = document.getElementById("page-loading-overlay");
       overlay?.classList.remove("active");
       overlay?.setAttribute("aria-hidden", "true");
+    }
+
+    function parameterIgnoresLevel(param) {
+      return param === "По уровню"
+        || param.startsWith("Кланы")
+        || param.startsWith("Братства");
+    }
+
+    function submitParameterChange(select) {
+      if (!select || !select.form) return;
+      const levelSelect = select.form.querySelector('select[name="level"]');
+      if (parameterIgnoresLevel(select.value) && levelSelect) {
+        levelSelect.value = "Все";
+      }
+      submitWithLoading(select.form);
     }
 
     function submitWithLoading(form, message = "Загрузка…") {
@@ -328,14 +361,20 @@
       }
     }
 
-    function handleSearchEnter(event) {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        searchByNickname();
-      }
-    }
-
     document.addEventListener("DOMContentLoaded", () => {
+      const selectedParam = {{ param|tojson }};
+      const currentUrl = new URL(window.location.href);
+      const requestedLevel = currentUrl.searchParams.get("level");
+      if (
+        parameterIgnoresLevel(selectedParam)
+        && requestedLevel
+        && requestedLevel !== "Все"
+      ) {
+        currentUrl.searchParams.set("level", "Все");
+        window.location.replace(currentUrl.toString());
+        return;
+      }
+
       const root = document.documentElement;
       const toggle = document.getElementById("theme-toggle");
       const dark = localStorage.getItem("theme") === "dark";
@@ -349,28 +388,122 @@
       });
 
       const input = document.getElementById("scroll-nick");
-      const datalist = document.getElementById("nicknames");
+      const suggestions = document.getElementById("rating-suggestions");
       let suggestTimer = null;
+      let activeSuggestion = -1;
+
+      function closeRatingSuggestions() {
+        if (!suggestions || !input) return;
+        suggestions.hidden = true;
+        suggestions.replaceChildren();
+        input.setAttribute("aria-expanded", "false");
+        input.removeAttribute("aria-activedescendant");
+        activeSuggestion = -1;
+      }
+
+      function selectRatingSuggestion(button) {
+        if (!input || !button) return;
+        input.value = button.dataset.name || "";
+        closeRatingSuggestions();
+        input.focus();
+      }
+
+      function setActiveRatingSuggestion(index) {
+        if (!suggestions || !input) return;
+        const buttons = [...suggestions.querySelectorAll(".rating-suggestion")];
+        if (!buttons.length) return;
+        activeSuggestion = Math.max(0, Math.min(index, buttons.length - 1));
+        buttons.forEach((button, buttonIndex) => {
+          const active = buttonIndex === activeSuggestion;
+          button.classList.toggle("is-active", active);
+          button.setAttribute("aria-selected", active ? "true" : "false");
+        });
+        input.setAttribute("aria-activedescendant", buttons[activeSuggestion].id);
+      }
+
+      function renderRatingSuggestions(items) {
+        if (!suggestions || !input) return;
+        suggestions.replaceChildren();
+        activeSuggestion = -1;
+        items.slice(0, 5).forEach((item, index) => {
+          const name = typeof item === "string" ? item : String(item.name || "");
+          if (!name) return;
+          const level = typeof item === "object" && item.level != null ? String(item.level) : "";
+          const button = document.createElement("button");
+          button.type = "button";
+          button.id = `rating-suggestion-${index}`;
+          button.className = "rating-suggestion player-suggestion";
+          button.setAttribute("role", "option");
+          button.setAttribute("aria-selected", "false");
+          button.dataset.name = name;
+
+          const namePart = document.createElement("span");
+          namePart.className = "rating-suggestion-name player-suggestion-name";
+          namePart.textContent = name;
+          button.appendChild(namePart);
+
+          if (level) {
+            const levelPart = document.createElement("span");
+            levelPart.className = "rating-suggestion-level player-suggestion-level";
+            levelPart.textContent = `[${level}]`;
+            button.appendChild(levelPart);
+          }
+
+          button.addEventListener("mousedown", (event) => event.preventDefault());
+          button.addEventListener("click", () => selectRatingSuggestion(button));
+          suggestions.appendChild(button);
+        });
+
+        const hasItems = suggestions.childElementCount > 0;
+        suggestions.hidden = !hasItems;
+        input.setAttribute("aria-expanded", hasItems ? "true" : "false");
+      }
+
       input?.addEventListener("input", () => {
         clearTimeout(suggestTimer);
+        closeRatingSuggestions();
         const value = input.value.trim();
-        datalist.innerHTML = "";
         if (value.length < 2) return;
         suggestTimer = setTimeout(async () => {
           const formData = new FormData(document.getElementById("ratings-form"));
           const snapshot = formData.get("file2") || formData.get("file") || {{ (json_files[0] if json_files else '')|tojson }};
+          const level = formData.get("level") || "Все";
+          const params = new URLSearchParams({snapshot, q: value, level});
           try {
-            const response = await fetch(`/api/player_suggest?snapshot=${encodeURIComponent(snapshot)}&q=${encodeURIComponent(value)}`);
-            const names = await response.json();
-            names.forEach((name) => {
-              const option = document.createElement("option");
-              option.value = name;
-              datalist.appendChild(option);
-            });
+            const response = await fetch(`/api/player_suggest?${params.toString()}`);
+            if (!response.ok) throw new Error(`Suggestion request failed: ${response.status}`);
+            renderRatingSuggestions(await response.json());
           } catch (error) {
+            closeRatingSuggestions();
             console.error(error);
           }
-        }, 180);
+        }, 150);
+      });
+
+      input?.addEventListener("keydown", (event) => {
+        const buttons = suggestions && !suggestions.hidden
+          ? [...suggestions.querySelectorAll(".rating-suggestion")]
+          : [];
+        if (event.key === "ArrowDown" && buttons.length) {
+          event.preventDefault();
+          setActiveRatingSuggestion(activeSuggestion < 0 ? 0 : activeSuggestion + 1);
+        } else if (event.key === "ArrowUp" && buttons.length) {
+          event.preventDefault();
+          setActiveRatingSuggestion(activeSuggestion < 0 ? buttons.length - 1 : activeSuggestion - 1);
+        } else if (event.key === "Enter") {
+          event.preventDefault();
+          if (activeSuggestion >= 0 && buttons[activeSuggestion]) {
+            selectRatingSuggestion(buttons[activeSuggestion]);
+          } else {
+            searchByNickname();
+          }
+        } else if (event.key === "Escape") {
+          closeRatingSuggestions();
+        }
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!event.target.closest?.(".rating-search-box")) closeRatingSuggestions();
       });
 
       document.querySelectorAll("form").forEach((form) => {

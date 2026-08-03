@@ -184,13 +184,17 @@ class PersonalRatingLayoutTests(unittest.TestCase):
         finally:
             conn.close()
 
-    def test_profile_suggestions_are_limited_and_include_level(self) -> None:
+    def test_all_search_suggestions_are_limited_level_sorted_and_filtered(self) -> None:
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
         try:
             conn.executescript(
                 """
-                CREATE TABLE snapshots(snapshot_id INTEGER PRIMARY KEY,ts INTEGER NOT NULL);
+                CREATE TABLE snapshots(
+                    snapshot_id INTEGER PRIMARY KEY,
+                    filename TEXT NOT NULL UNIQUE,
+                    ts INTEGER NOT NULL
+                );
                 CREATE TABLE text_values(
                     text_id INTEGER PRIMARY KEY,
                     value TEXT NOT NULL,
@@ -202,44 +206,75 @@ class PersonalRatingLayoutTests(unittest.TestCase):
                     name_id INTEGER NOT NULL,
                     level INTEGER
                 );
-                INSERT INTO snapshots VALUES(1,100);
-                INSERT INTO snapshots VALUES(2,200);
+                INSERT INTO snapshots VALUES(1,'old',100);
+                INSERT INTO snapshots VALUES(2,'latest',200);
                 INSERT INTO text_values VALUES(1,'Player Alpha','player alpha');
                 INSERT INTO text_values VALUES(2,'Player Beta','player beta');
                 INSERT INTO text_values VALUES(3,'Player Gamma','player gamma');
                 INSERT INTO text_values VALUES(4,'Player Delta','player delta');
+                INSERT INTO text_values VALUES(5,'Player Epsilon','player epsilon');
+                INSERT INTO text_values VALUES(6,'Player Zeta','player zeta');
                 INSERT INTO observations VALUES(2,1,1,11);
-                INSERT INTO observations VALUES(2,2,2,12);
+                INSERT INTO observations VALUES(2,2,2,15);
                 INSERT INTO observations VALUES(2,3,3,13);
                 INSERT INTO observations VALUES(2,4,4,14);
+                INSERT INTO observations VALUES(2,5,5,12);
+                INSERT INTO observations VALUES(2,6,6,10);
                 """
             )
 
             class FakeApp:
                 def __init__(self):
                     self.view_functions = {
-                        "api_player_suggest_all": lambda: ["legacy"]
+                        "api_player_suggest_all": lambda: ["legacy-all"],
+                        "api_player_suggest": lambda: ["legacy-snapshot"],
                     }
 
             class FakeRequest:
-                args = {"q": "player"}
+                def __init__(self):
+                    self.args = {"q": "player"}
 
             flask_app = FakeApp()
+            fake_request = FakeRequest()
             namespace = {
                 "app": flask_app,
                 "api_player_suggest_all": flask_app.view_functions["api_player_suggest_all"],
+                "api_player_suggest": flask_app.view_functions["api_player_suggest"],
                 "get_db": lambda: conn,
                 "normalize_name": lambda value: " ".join(value.casefold().split()),
+                "snapshot_num": lambda filename: 2 if filename == "latest" else None,
                 "_db_available": lambda: True,
-                "request": FakeRequest(),
+                "request": fake_request,
                 "jsonify": lambda payload: payload,
             }
             self.assertTrue(forglory._patch_player_suggestion_route(namespace))
 
-            payload = flask_app.view_functions["api_player_suggest_all"]()
-            self.assertEqual(len(payload), 3)
-            self.assertEqual(payload[0], {"name": "Player Alpha", "level": 11})
-            self.assertTrue(all("name" in item and "level" in item for item in payload))
+            all_payload = flask_app.view_functions["api_player_suggest_all"]()
+            self.assertEqual(len(all_payload), 5)
+            self.assertEqual(
+                [item["level"] for item in all_payload],
+                [15, 14, 13, 12, 11],
+            )
+            self.assertEqual(all_payload[0]["name"], "Player Beta")
+
+            fake_request.args = {
+                "q": "player",
+                "snapshot": "latest",
+                "level": "Все",
+            }
+            snapshot_payload = flask_app.view_functions["api_player_suggest"]()
+            self.assertEqual(snapshot_payload, all_payload)
+
+            fake_request.args = {
+                "q": "player",
+                "snapshot": "latest",
+                "level": "12",
+            }
+            filtered_payload = flask_app.view_functions["api_player_suggest"]()
+            self.assertEqual(
+                filtered_payload,
+                [{"name": "Player Epsilon", "level": 12}],
+            )
         finally:
             conn.close()
 
@@ -257,11 +292,28 @@ class PersonalRatingLayoutTests(unittest.TestCase):
         self.assertIn('data-label="Общее (место)"', template)
         self.assertIn("row.best_rank", template)
         self.assertIn('id="profile-suggestions"', template)
-        self.assertIn("items.slice(0, 3)", template)
-        self.assertIn('className = "profile-suggestion-level"', template)
+        self.assertIn("items.slice(0, 5)", template)
+        self.assertIn('player-suggestion-level', template)
         self.assertIn('id="personal-table-controls"', template)
         self.assertIn('id="personal-scroll-left"', template)
         self.assertIn('id="personal-scroll-right"', template)
+
+    def test_rating_template_uses_the_same_five_level_suggestions(self) -> None:
+        template = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn('list="nicknames"', template)
+        self.assertNotIn('<datalist id="nicknames">', template)
+        self.assertIn('id="rating-suggestions"', template)
+        self.assertIn("items.slice(0, 5)", template)
+        self.assertIn("player-suggestion-level", template)
+        self.assertIn('formData.get("level") || "Все"', template)
+        self.assertIn("filename='search-suggestions.css'", template)
+
+    def test_shared_suggestion_css_keeps_level_next_to_name(self) -> None:
+        css = (ROOT / "static" / "search-suggestions.css").read_text(encoding="utf-8")
+        self.assertIn("justify-content: flex-start", css)
+        self.assertIn("margin-left: 0.35em", css)
+        self.assertIn("font-size: 0.76em", css)
+        self.assertIn(".rating-search-box", css)
 
     def test_profile_css_places_controls_below_table(self) -> None:
         css = (ROOT / "static" / "profile-fixes.css").read_text(encoding="utf-8")

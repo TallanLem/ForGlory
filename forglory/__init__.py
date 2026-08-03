@@ -280,27 +280,48 @@ def _patch_personal_stats_query(namespace: dict) -> bool:
 
 
 def _patch_player_suggestion_route(namespace: dict) -> bool:
-    """Return at most three current players with their current levels."""
+    """Use the same five level-sorted player suggestions in every search."""
     flask_app = namespace.get("app")
     get_db = namespace.get("get_db")
     normalize_name = namespace.get("normalize_name")
+    snapshot_num = namespace.get("snapshot_num")
     db_available = namespace.get("_db_available")
     request = namespace.get("request")
     jsonify = namespace.get("jsonify")
     if not all(
         callable(value)
-        for value in (get_db, normalize_name, db_available, jsonify)
+        for value in (
+            get_db,
+            normalize_name,
+            snapshot_num,
+            db_available,
+            jsonify,
+        )
     ) or flask_app is None or request is None:
         return False
 
-    current = getattr(flask_app, "view_functions", {}).get("api_player_suggest_all")
-    if not callable(current):
+    view_functions = getattr(flask_app, "view_functions", {})
+    current_all = view_functions.get("api_player_suggest_all")
+    current_snapshot = view_functions.get("api_player_suggest")
+    if not callable(current_all) or not callable(current_snapshot):
         return False
-    if getattr(current, "_forglory_compact_suggestions", False):
+    if (
+        getattr(current_all, "_forglory_level_sorted_suggestions", False)
+        and getattr(current_snapshot, "_forglory_level_sorted_suggestions", False)
+    ):
         return True
 
-    @wraps(current)
-    def compact_player_suggestions():
+    def serialize(rows):
+        return [
+            {
+                "name": str(row["name"]),
+                "level": int(row["level"]) if row["level"] is not None else None,
+            }
+            for row in rows
+        ]
+
+    @wraps(current_all)
+    def compact_player_suggestions_all():
         if not db_available():
             return jsonify([])
         query_text = normalize_name(request.args.get("q") or "")
@@ -319,7 +340,7 @@ def _patch_player_suggestion_route(namespace: dict) -> bool:
                 SELECT n.value AS name,n.norm AS name_norm,o.level,o.pid,
                        ROW_NUMBER() OVER(
                            PARTITION BY n.norm
-                           ORDER BY o.pid ASC
+                           ORDER BY COALESCE(o.level,-1) DESC,o.pid ASC
                        ) AS same_name_rank
                 FROM observations o
                 JOIN latest l ON l.snapshot_id=o.snapshot_id
@@ -329,26 +350,63 @@ def _patch_player_suggestion_route(namespace: dict) -> bool:
             SELECT name,name_norm,level,pid
             FROM matches
             WHERE same_name_rank=1
-            ORDER BY CASE WHEN name_norm=? THEN 0 ELSE 1 END,name,pid
-            LIMIT 3
+            ORDER BY COALESCE(level,-1) DESC,
+                     CASE WHEN name_norm=? THEN 0 ELSE 1 END,
+                     name COLLATE NOCASE,pid
+            LIMIT 5
             """,
             (f"%{query_text}%", query_text),
         ).fetchall()
-        return jsonify(
-            [
-                {
-                    "name": str(row["name"]),
-                    "level": (
-                        int(row["level"]) if row["level"] is not None else None
-                    ),
-                }
-                for row in rows
-            ]
-        )
+        return jsonify(serialize(rows))
 
-    compact_player_suggestions._forglory_compact_suggestions = True
-    flask_app.view_functions["api_player_suggest_all"] = compact_player_suggestions
-    namespace["api_player_suggest_all"] = compact_player_suggestions
+    @wraps(current_snapshot)
+    def compact_player_suggestions_snapshot():
+        if not db_available():
+            return jsonify([])
+        query_text = normalize_name(request.args.get("q") or "")
+        snapshot = request.args.get("snapshot")
+        snapshot_id = snapshot_num(snapshot)
+        if snapshot_id is None or len(query_text) < 2:
+            return jsonify([])
+
+        level_raw = str(request.args.get("level") or "").strip()
+        level = int(level_raw) if level_raw.isdigit() else None
+        level_sql = " AND o.level=?" if level is not None else ""
+        args = [int(snapshot_id), f"%{query_text}%"]
+        if level is not None:
+            args.append(level)
+        args.append(query_text)
+
+        rows = get_db().execute(
+            f"""
+            WITH matches AS (
+                SELECT n.value AS name,n.norm AS name_norm,o.level,o.pid,
+                       ROW_NUMBER() OVER(
+                           PARTITION BY n.norm
+                           ORDER BY COALESCE(o.level,-1) DESC,o.pid ASC
+                       ) AS same_name_rank
+                FROM observations o
+                JOIN text_values n ON n.text_id=o.name_id
+                WHERE o.snapshot_id=? AND n.norm LIKE ?{level_sql}
+            )
+            SELECT name,name_norm,level,pid
+            FROM matches
+            WHERE same_name_rank=1
+            ORDER BY COALESCE(level,-1) DESC,
+                     CASE WHEN name_norm=? THEN 0 ELSE 1 END,
+                     name COLLATE NOCASE,pid
+            LIMIT 5
+            """,
+            args,
+        ).fetchall()
+        return jsonify(serialize(rows))
+
+    compact_player_suggestions_all._forglory_level_sorted_suggestions = True
+    compact_player_suggestions_snapshot._forglory_level_sorted_suggestions = True
+    view_functions["api_player_suggest_all"] = compact_player_suggestions_all
+    view_functions["api_player_suggest"] = compact_player_suggestions_snapshot
+    namespace["api_player_suggest_all"] = compact_player_suggestions_all
+    namespace["api_player_suggest"] = compact_player_suggestions_snapshot
     return True
 
 

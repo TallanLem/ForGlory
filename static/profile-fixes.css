@@ -1,0 +1,42 @@
+/* Personal rating table fixes loaded after the common stylesheet. */
+.personal-table-wrap {
+  position: relative;
+}
+
+.personal-stats-table {
+  table-layout: auto;
+}
+
+/* Shrink the sticky parameter column to its longest unwrapped label. */
+.personal-stats-table th:first-child,
+.personal-stats-table td:first-child {
+  width: 1%;
+  min-width: 0;
+  max-width: none;
+  white-space: nowrap;
+  background-clip: padding-box;
+  box-shadow: 1px 0 0 var(--border-color);
+}
+
+/* Sticky cells must be opaque; otherwise horizontally scrolling values show through. */
+.personal-stats-table thead th:first-child {
+  background: var(--header-color);
+}
+
+.personal-stats-table tbody tr:nth-child(odd) > td:first-child {
+  background: var(--odd-row);
+}
+
+.personal-stats-table tbody tr:nth-child(even) > td:first-child {
+  background: var(--even-row);
+}
+
+@media (max-width: 620px) {
+  /* The old left padding left a transparent strip before the sticky column. */
+  .personal-table-wrap {
+    margin-right: -7px;
+    margin-left: -7px;
+    padding-right: 7px;
+    padding-left: 0;
+  }
+}

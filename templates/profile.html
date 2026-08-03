@@ -6,11 +6,13 @@
   <title>Личная статистика — For Glory!</title>
   <link rel="icon" href="{{ url_for('static', filename='icons/favicon.png') }}" type="image/x-icon">
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='profile-fixes.css') }}">
   <script>
     if (localStorage.getItem("theme") === "dark") {
       document.documentElement.classList.add("dark");
     }
   </script>
+  <script src="{{ url_for('static', filename='clean-query-url.js') }}"></script>
 </head>
 <body>
   <div id="page-loading-overlay" class="page-loading-overlay" aria-hidden="true">

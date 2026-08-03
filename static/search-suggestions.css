@@ -82,3 +82,13 @@
     flex: 0 0 auto;
   }
 }
+
+/* Keep only ranking-position cells centered; other columns retain their layout. */
+.rating-table > thead > tr > th:first-child,
+.rating-table > tbody > tr:not(.group-row) > td:first-child,
+.inner-table > thead > tr > th:first-child,
+.inner-table > tbody > tr > td:first-child,
+.group-rank-head,
+.group-rank {
+  text-align: center !important;
+}

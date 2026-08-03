@@ -558,7 +558,7 @@
         else tbody.innerHTML = data.rows_html || "";
         tbody.dataset.page = String(nextPage);
         if (button) button.style.display = data.has_more ? "inline-block" : "none";
-        if (status) status.textContent = data.has_more ? "" : "Конец списка";
+        if (status) status.textContent = "";
       } catch (error) {
         if (status) status.textContent = "Ошибка загрузки";
         console.error(error);

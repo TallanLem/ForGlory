@@ -1,15 +1,11 @@
-name: Remove Latest Snapshot
+name: Repair Growth Counters
 
 on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type DELETE LATEST SNAPSHOT"
+        description: "Type REPAIR GROWTH COUNTERS"
         required: true
-        type: string
-      expected_latest:
-        description: "Optional exact latest filename; rollback stops if it does not match"
-        required: false
         type: string
 
 permissions:
@@ -20,7 +16,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  rollback-latest:
+  repair-growth:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -29,8 +25,8 @@ jobs:
         env:
           CONFIRM: ${{ inputs.confirm }}
         run: |
-          if [ "$CONFIRM" != "DELETE LATEST SNAPSHOT" ]; then
-            echo "Confirmation must be exactly: DELETE LATEST SNAPSHOT" >&2
+          if [ "$CONFIRM" != "REPAIR GROWTH COUNTERS" ]; then
+            echo "Confirmation must be exactly: REPAIR GROWTH COUNTERS" >&2
             exit 1
           fi
 
@@ -56,37 +52,19 @@ jobs:
             --attempts 3 \
             --retry-delay 10
 
-      - name: Create a pre-rollback backup
+      - name: Back up the database before repair
         run: |
           python tools/compress_db.py \
             --db data/db/ratings.sqlite \
-            --out data/db/ratings.before-remove.sqlite.gz
+            --out data/db/ratings.before-growth-repair.sqlite.gz
 
-      - name: Upload the pre-rollback backup
+      - name: Upload the pre-repair backup
         uses: actions/upload-artifact@v4
         with:
-          name: database-before-remove-${{ github.run_id }}
-          path: data/db/ratings.before-remove.sqlite.gz
+          name: database-before-growth-repair-${{ github.run_id }}
+          path: data/db/ratings.before-growth-repair.sqlite.gz
           retention-days: 30
           if-no-files-found: error
-
-      - name: Remove exactly the latest snapshot
-        id: rollback
-        env:
-          EXPECTED_LATEST: ${{ inputs.expected_latest }}
-        shell: bash
-        run: |
-          args=(
-            --db data/db/ratings.sqlite
-            --best-window-days 30
-            --max-gap-hours 26
-            --vacuum
-            --github-output "$GITHUB_OUTPUT"
-          )
-          if [ -n "$EXPECTED_LATEST" ]; then
-            args+=(--expect-filename "$EXPECTED_LATEST")
-          fi
-          python tools/remove_latest_snapshot.py "${args[@]}"
 
       - name: Normalize wrapped counter history
         run: |
@@ -100,41 +78,57 @@ jobs:
             --window-days 30 \
             --max-gap-hours 26
 
-      - name: Calculate corrected database hash
-        id: corrected
+      - name: Read repaired database metadata
+        id: repaired
         shell: bash
         run: |
           python - <<'PY'
           import hashlib
           import os
+          import sqlite3
           from pathlib import Path
 
           path = Path("data/db/ratings.sqlite")
+          conn = sqlite3.connect(path)
+          try:
+              latest = conn.execute(
+                  "SELECT filename FROM snapshots ORDER BY ts DESC LIMIT 1"
+              ).fetchone()
+              count = int(conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0])
+          finally:
+              conn.close()
+
           digest = hashlib.sha256()
           with path.open("rb") as handle:
               for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                   digest.update(chunk)
+
+          latest_name = str(latest[0]) if latest else ""
           value = digest.hexdigest()
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"latest_snapshot={latest_name}\n")
+              output.write(f"snapshot_count={count}\n")
               output.write(f"sha256={value}\n")
-          print(f"Corrected database sha256={value}")
+          print(
+              f"Repaired database: latest={latest_name}, snapshots={count}, sha256={value}"
+          )
           PY
 
-      - name: Compress the corrected database
+      - name: Compress the repaired database
         run: |
           python tools/compress_db.py \
             --db data/db/ratings.sqlite \
             --out data/db/ratings.sqlite.gz
 
-      - name: Upload the corrected database backup
+      - name: Upload the repaired database backup
         uses: actions/upload-artifact@v4
         with:
-          name: database-after-remove-${{ github.run_id }}
+          name: database-after-growth-repair-${{ github.run_id }}
           path: data/db/ratings.sqlite.gz
           retention-days: 30
           if-no-files-found: error
 
-      - name: Publish the corrected database in GitHub Release
+      - name: Publish the repaired database in GitHub Release
         uses: ncipollo/release-action@v1
         with:
           tag: db-latest
@@ -143,7 +137,7 @@ jobs:
           replacesArtifacts: true
           artifacts: data/db/ratings.sqlite.gz
 
-      - name: Verify the published rollback
+      - name: Verify the published database
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPO: ${{ github.repository }}
@@ -151,23 +145,13 @@ jobs:
           rm -f data/db/published.sqlite
           python tools/fetch_db_from_release.py \
             --out data/db/published.sqlite \
-            --expect-latest-snapshot "${{ steps.rollback.outputs.new_latest_snapshot }}" \
-            --minimum-snapshot-count "${{ steps.rollback.outputs.snapshot_count }}" \
-            --expect-sha256 "${{ steps.corrected.outputs.sha256 }}" \
+            --expect-latest-snapshot "${{ steps.repaired.outputs.latest_snapshot }}" \
+            --minimum-snapshot-count "${{ steps.repaired.outputs.snapshot_count }}" \
+            --expect-sha256 "${{ steps.repaired.outputs.sha256 }}" \
             --attempts 6 \
             --retry-delay 10
 
-      - name: Write rollback summary
-        run: |
-          {
-            echo "## Latest snapshot removed"
-            echo
-            echo "- Removed: \`${{ steps.rollback.outputs.removed_snapshot }}\`"
-            echo "- New latest: \`${{ steps.rollback.outputs.new_latest_snapshot }}\`"
-            echo "- Remaining snapshots: ${{ steps.rollback.outputs.snapshot_count }}"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Trigger Render only after the corrected release is ready
+      - name: Trigger Render after publication
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |

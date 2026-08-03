@@ -224,6 +224,18 @@ jobs:
             --best-window-days 30 \
             --max-gap-hours 26
 
+      - name: Normalize wrapped counter history
+        run: |
+          python tools/normalize_counter_wraps.py \
+            --db data/db/ratings.sqlite
+
+      - name: Rebuild wrap-safe best growth rankings
+        run: |
+          python tools/rebuild_best_growth_safe.py \
+            --db data/db/ratings.sqlite \
+            --window-days 30 \
+            --max-gap-hours 26
+
       - name: Synchronize clan and brotherhood data (non-fatal)
         continue-on-error: true
         run: |

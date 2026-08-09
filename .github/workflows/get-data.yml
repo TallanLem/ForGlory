@@ -2,7 +2,14 @@ name: Get Player Data
 
 on:
   schedule:
+    # Primary run: 20:24 Moscow time (17:24 UTC).
+    # The following three entries are reserve attempts of the SAME workflow.
+    # concurrency serializes them, and the ±5 hour snapshot guard prevents
+    # another collection after a successful published snapshot.
     - cron: "24 17 * * *"
+    - cron: "24 18 * * *"
+    - cron: "24 19 * * *"
+    - cron: "24 20 * * *"
   workflow_dispatch:
     inputs:
       force:
@@ -21,7 +28,9 @@ concurrency:
 jobs:
   duplicate-guard:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # GitHub can delay assignment of a hosted runner for a long time.
+    # The old 15-minute timeout cancelled the job before it got a runner.
+    timeout-minutes: 180
     outputs:
       should_run: ${{ steps.window.outputs.should_run }}
       reason: ${{ steps.window.outputs.reason }}
@@ -85,7 +94,8 @@ jobs:
     needs: duplicate-guard
     if: needs.duplicate-guard.outputs.should_run == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # Also leave enough room for GitHub-hosted runner delays and the full build.
+    timeout-minutes: 180
 
     steps:
       - name: Checkout

@@ -2,14 +2,7 @@ name: Get Player Data
 
 on:
   schedule:
-    # Primary run: 20:24 Moscow time (17:24 UTC).
-    # The following three entries are reserve attempts of the SAME workflow.
-    # concurrency serializes them, and the ±5 hour snapshot guard prevents
-    # another collection after a successful published snapshot.
-    - cron: "24 17 * * *"
-    - cron: "24 18 * * *"
-    - cron: "24 19 * * *"
-    - cron: "24 20 * * *"
+    - cron: "24,54 17-20 * * *"
   workflow_dispatch:
     inputs:
       force:

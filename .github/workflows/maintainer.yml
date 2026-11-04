@@ -36,7 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python3 tools/forglory_maintainer.py --max-seconds 19800
+          python3 tools/forglory_maintainer.py --max-seconds 17100
 
       - name: Continue maintainer chain
         if: always()

@@ -1,8 +1,7 @@
 name: Get Player Data
 
 on:
-  schedule:
-    - cron: "24,54 17,18,19,20 * * *"
+  # The chained maintainer dispatches this workflow at 22:00 Moscow time.
   workflow_dispatch:
     inputs:
       force:

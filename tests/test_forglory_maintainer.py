@@ -31,6 +31,18 @@ class MaintainerTimingTests(unittest.TestCase):
         self.assertTrue(maintainer.is_collection_due(
             datetime(2026, 11, 5, 19, 0, 0, tzinfo=timezone.utc), "2026-11-04"))
 
+    def test_runner_rotation_held_during_collection_window(self):
+        self.assertTrue(maintainer.hold_for_collection(
+            datetime(2026, 11, 4, 18, 59, tzinfo=timezone.utc), 17200, 17100))
+
+    def test_runner_rotation_allowed_after_window(self):
+        self.assertFalse(maintainer.hold_for_collection(
+            datetime(2026, 11, 4, 19, 5, tzinfo=timezone.utc), 17200, 17100))
+
+    def test_runner_rotation_never_exceeds_hard_cap(self):
+        self.assertFalse(maintainer.hold_for_collection(
+            datetime(2026, 11, 4, 18, 59, tzinfo=timezone.utc), 21000, 17100))
+
 
 if __name__ == "__main__":
     unittest.main()

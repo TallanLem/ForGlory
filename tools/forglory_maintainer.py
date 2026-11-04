@@ -67,6 +67,15 @@ def is_collection_due(now_utc: datetime, last_day: str | None) -> bool:
     local = now_utc.astimezone(MOSCOW)
     return local.hour >= 22 and local.date().isoformat() != last_day
 
+def hold_for_collection(now_utc: datetime, elapsed_seconds: float, base_seconds: int) -> bool:
+    """Avoid changing runners during the Moscow 22:00 collection window."""
+    local = now_utc.astimezone(MOSCOW)
+    minutes = local.hour * 60 + local.minute
+    # GitHub jobs have a 6h hard limit. Never extend beyond 5h50.
+    return 21 * 60 <= minutes < 22 * 60 + 5 and elapsed_seconds < min(
+        base_seconds + 3900, 21000
+    )
+
 
 def dispatch_collection(token: str, repository: str, branch: str) -> None:
     url = f'https://api.github.com/repos/{repository}/actions/workflows/get-data.yml/dispatches'
@@ -147,8 +156,13 @@ def main(max_seconds: int) -> int:
     state_save_retry_after = 0.0
     pending_state_save = False
 
-    while time.monotonic() - start < max_seconds:
+    while True:
         tick = time.monotonic()
+        elapsed = tick - start
+        if elapsed >= max_seconds and not hold_for_collection(
+            datetime.now(timezone.utc), elapsed, max_seconds
+        ):
+            break
         if tick >= next_ping:
             if ping_thread is None or not ping_thread.is_alive():
                 ping_thread = threading.Thread(target=ping_render, daemon=True)
@@ -198,7 +212,7 @@ def main(max_seconds: int) -> int:
 
 if __name__ == '__main__':
     argument_parser = argparse.ArgumentParser()
-    argument_parser.add_argument('--max-seconds', type=int, default=19800)
+    argument_parser.add_argument('--max-seconds', type=int, default=17100)
     args = argument_parser.parse_args()
     try:
         sys.exit(main(args.max_seconds))

@@ -1,0 +1,58 @@
+name: ForGlory Maintainer (Chain)
+
+on:
+  workflow_dispatch:
+  # Recovery/bootstrap: start at 20:07 Moscow time, ~2h before collection.
+  # The self-dispatch chain handles normal operation between scheduled runs.
+  schedule:
+    - cron: "7 17 * * *"
+  # Bootstrap the maintainer when this workflow is first created or edited.
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/maintainer.yml"
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: forglory-maintainer
+  cancel-in-progress: false
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Keep Render awake and dispatch collection at 22:00 Moscow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 tools/forglory_maintainer.py --max-seconds 19800
+
+      - name: Continue maintainer chain
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ref="${GITHUB_REF_NAME:-main}"
+          payload=$(printf '{"ref":"%s"}' "$ref")
+          curl \
+            --fail-with-body --silent --show-error \
+            --retry 4 --retry-all-errors --retry-delay 10 --max-time 30 \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/maintainer.yml/dispatches" \
+            -d "$payload"

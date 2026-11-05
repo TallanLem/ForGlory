@@ -104,7 +104,7 @@ def _cookie_configs() -> list[tuple[dict[str, str], str]]:
         domain = str(item.get("domain") or "").strip().lower().lstrip(".")
         name = item.get("name")
         value = item.get("value")
-        if not re.fullmatch(r"[a-z0-9-]+(?:\\.[a-z0-9-]+)+", domain):
+        if not re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", domain):
             continue
         if not isinstance(name, str) or not isinstance(value, str) or not value:
             continue

@@ -452,7 +452,13 @@ def fetch_from_bulk_api(
                 "Referer": domain,
             }
         )
-        session.cookies.update(cookies)
+        # Attach cookies to the selected host instead of a hostless jar.
+        # This prevents credentials from following redirects to other domains.
+        host = urlparse(domain).hostname
+        if host is None:
+            raise ApiCollectionError(f"Invalid authenticated domain: {domain!r}")
+        for name, value in cookies.items():
+            session.cookies.set(name, value, domain=host, path="/", secure=True)
 
         for attempt in range(1, attempts + 1):
             try:
@@ -641,7 +647,13 @@ def scan_group_rosters(
     with requests.Session() as session:
         session.headers.update(legacy.HEADERS)
         session.headers.update({"Accept": "text/html", "Referer": domain})
-        session.cookies.update(cookies)
+        # Attach cookies to the selected host instead of a hostless jar.
+        # This prevents credentials from following redirects to other domains.
+        host = urlparse(domain).hostname
+        if host is None:
+            raise ApiCollectionError(f"Invalid authenticated domain: {domain!r}")
+        for name, value in cookies.items():
+            session.cookies.set(name, value, domain=host, path="/", secure=True)
 
         def fetch_one(group_id: int, configured_attempts: int) -> GroupRoster | None:
             url = urljoin(domain, f"{group_kind}/warriors?id={group_id}")

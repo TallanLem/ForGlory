@@ -80,41 +80,81 @@ def _read_cookie_records() -> list[dict[str, Any]]:
     except (OSError, json.JSONDecodeError, TypeError) as exc:
         raise ApiCollectionError(f"Cannot read cookie configuration: {exc}") from exc
 
+    if isinstance(raw, dict) and "cookies" in raw:
+        raw = raw["cookies"]
     if not isinstance(raw, list):
-        raise ApiCollectionError("Cookie configuration must be a JSON list")
+        raise ApiCollectionError(
+            "Cookie configuration must be a JSON list or an object with a cookies list"
+        )
     return [item for item in raw if isinstance(item, dict)]
 
 
-def load_cookie_config() -> tuple[dict[str, str], str]:
-    """Build cookies and the game URL strictly from the session-cookie domain."""
+def _game_session_cookie(name: str) -> bool:
+    """Recognize both legacy and versioned Wekings session cookie names."""
+    return name == "wekings_session" or name.startswith("wekings_session_")
+
+
+def _cookie_configs() -> list[tuple[dict[str, str], str]]:
+    """Return one cookie set per domain, with no cross-domain cookie mixing."""
     raw = _read_cookie_records()
-    cookies = {
-        str(item.get("name")): str(item.get("value"))
-        for item in raw
-        if item.get("name") and item.get("value")
-    }
-    if not cookies:
-        raise ApiCollectionError("Cookie configuration contains no usable cookies")
+    bundles: dict[str, dict[str, str]] = {}
+    domains_with_session: set[str] = set()
 
-    session_cookie = next(
-        (
-            item
-            for item in raw
-            if item.get("name") == "wekings_session" and item.get("domain")
+    for item in raw:
+        domain = str(item.get("domain") or "").strip().lower().lstrip(".")
+        name = item.get("name")
+        value = item.get("value")
+        if not re.fullmatch(r"[a-z0-9-]+(?:\\.[a-z0-9-]+)+", domain):
+            continue
+        if not isinstance(name, str) or not isinstance(value, str) or not value:
+            continue
+        bundles.setdefault(domain, {})[name] = value
+        if _game_session_cookie(name):
+            domains_with_session.add(domain)
+
+    if not domains_with_session:
+        raise ApiCollectionError(
+            "Cookie configuration contains no Wekings session cookie with a domain "
+            "(expected wekings_session or wekings_session_*). "
+            "Export fresh authenticated game cookies."
+        )
+
+    preferred = legacy.env_get("WK_DOMAIN", "").strip().lower().lstrip(".")
+    if preferred:
+        preferred = preferred.removeprefix("https://").removeprefix("http://").rstrip("/")
+        if preferred not in domains_with_session:
+            raise ApiCollectionError(
+                "WK_DOMAIN does not match any domain with a Wekings session cookie"
+            )
+
+    # The first working game domain is used for all subsequent data requests.
+    priority = {"wekings.online": 0, "playwekings.com": 1, "playwekings.mobi": 2}
+    ordered = sorted(
+        domains_with_session,
+        key=lambda domain: (
+            0 if preferred and domain == preferred else 1,
+            priority.get(domain, 10),
+            domain,
         ),
-        None,
     )
-    if session_cookie is None:
-        raise ApiCollectionError(
-            "Cookie configuration has no wekings_session cookie with a domain"
-        )
+    return [(bundles[domain], f"https://{domain}/") for domain in ordered]
 
-    cookie_domain = str(session_cookie["domain"]).strip().lstrip(".")
-    if not cookie_domain or "/" in cookie_domain or "://" in cookie_domain:
-        raise ApiCollectionError(
-            f"Invalid domain in wekings_session cookie: {cookie_domain!r}"
-        )
-    return cookies, f"https://{cookie_domain}/"
+
+def load_cookie_config() -> tuple[dict[str, str], str]:
+    """Select the preferred game domain using its own authenticated cookies."""
+    return _cookie_configs()[0]
+
+
+def _other_cookie_configs(primary_domain: str) -> list[tuple[dict[str, str], str]]:
+    """Try another authenticated domain before expensive profile fallback."""
+    try:
+        return [
+            candidate for candidate in _cookie_configs()
+            if candidate[1] != primary_domain
+        ]
+    except ApiCollectionError as exc:
+        LOG.info("No alternate authenticated domains configured: %s", exc)
+        return []
 
 
 def api_endpoint(domain: str) -> str:
@@ -1402,31 +1442,48 @@ def main() -> int:
         write_failure_report(str(exc), endpoint=api_endpoint(domain))
         return 2
 
-    # Only failures of the bulk endpoint itself (including an incomplete or
-    # structurally invalid payload) are allowed to activate the expensive
-    # profile collector. Missing clan/brotherhood fields are not endpoint
-    # failures because those memberships are always collected from roster pages.
+    # Try each authenticated domain with its OWN cookies. A failure on the
+    # first domain must not force a massive profile crawl if another works.
     try:
-        collection = fetch_from_bulk_api(
-            domain,
-            cookies,
-            attempts=int(legacy.env_get("HEROES_API_ATTEMPTS", "4")),
-            retry_delay_seconds=float(
-                legacy.env_get("HEROES_API_RETRY_DELAY_SECONDS", "5")
-            ),
-            timeout_seconds=float(legacy.env_get("HEROES_API_TIMEOUT_SECONDS", "45")),
-            min_player_count=int(legacy.env_get("HEROES_API_MIN_PLAYER_COUNT", "100")),
-        )
-
-        retained_count, retained_ratio = _coverage_ratio(
-            set(collection.heroes),
-            previous_ids,
-        )
-        if previous_ids and retained_ratio < args.min_success_ratio:
+        errors: list[str] = []
+        candidates = [(cookies, domain), *_other_cookie_configs(domain)]
+        for candidate_cookies, candidate_domain in candidates:
+            try:
+                candidate_collection = fetch_from_bulk_api(
+                    candidate_domain,
+                    candidate_cookies,
+                    attempts=int(legacy.env_get("HEROES_API_ATTEMPTS", "4")),
+                    retry_delay_seconds=float(
+                        legacy.env_get("HEROES_API_RETRY_DELAY_SECONDS", "5")
+                    ),
+                    timeout_seconds=float(legacy.env_get("HEROES_API_TIMEOUT_SECONDS", "45")),
+                    min_player_count=int(legacy.env_get("HEROES_API_MIN_PLAYER_COUNT", "100")),
+                )
+                candidate_count, candidate_ratio = _coverage_ratio(
+                    set(candidate_collection.heroes),
+                    previous_ids,
+                )
+                if previous_ids and candidate_ratio < args.min_success_ratio:
+                    raise ApiCollectionError(
+                        "API snapshot rejected: retained previous level-5+ coverage "
+                        f"{candidate_ratio:.2%} is below {args.min_success_ratio:.2%} "
+                        f"({candidate_count}/{len(previous_ids)})"
+                    )
+                collection = candidate_collection
+                cookies, domain = candidate_cookies, candidate_domain
+                retained_count, retained_ratio = candidate_count, candidate_ratio
+                LOG.info("Selected working authenticated domain: %s", domain)
+                break
+            except ApiCollectionError as candidate_error:
+                LOG.warning(
+                    "Authenticated domain %s failed: %s",
+                    candidate_domain,
+                    candidate_error,
+                )
+                errors.append(f"{candidate_domain}: {candidate_error}")
+        else:
             raise ApiCollectionError(
-                "API snapshot rejected: retained previous level-5+ coverage "
-                f"{retained_ratio:.2%} is below {args.min_success_ratio:.2%} "
-                f"({retained_count}/{len(previous_ids)})"
+                "All authenticated game domains failed: " + "; ".join(errors)
             )
     except ApiCollectionError as endpoint_error:
         LOG.exception(
